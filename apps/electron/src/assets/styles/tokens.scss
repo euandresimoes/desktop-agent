@@ -1,0 +1,194 @@
+//
+// -----------------------------------------------
+// Base
+// -----------------------------------------------
+//
+$color-app-bg: var(--color-app-bg);
+
+$color-text-primary: var(--color-text-primary);
+$color-text-secondary: var(--color-text-secondary);
+$color-text-muted: var(--color-text-muted);
+$color-text-inverse: var(--color-text-inverse);
+
+$color-base: var(--color-base);
+$color-surface: var(--color-surface);
+
+$color-border-default: var(--color-border-default);
+$color-border-active: var(--color-border-active);
+
+$color-app-accent: var(--color-app-accent);
+$color-app-accent-hover: var(--color-app-accent-hover);
+
+$color-app-scrollbar-thumb: var(--color-app-scrollbar-thumb);
+$color-app-scrollbar-thumb-hover: var(--color-app-scrollbar-thumb-hover);
+$color-app-scrollbar-track: var(--color-app-scrollbar-track);
+
+//
+// -----------------------------------------------
+// Topbar
+// -----------------------------------------------
+//
+$color-topbar-bg: var(--color-topbar-bg);
+
+//
+// -----------------------------------------------
+// View | Main Content
+// -----------------------------------------------
+//
+$color-app-view-bg: var(--color-app-view-bg);
+
+//
+// -----------------------------------------------
+// Status Bar
+// -----------------------------------------------
+//
+$color-statusbar-bg: var(--color-statusbar-bg);
+
+//
+// -----------------------------------------------
+// Dropdown
+// -----------------------------------------------
+//
+$color-dropdown-bg: var(--color-dropdown-bg);
+$color-dropdown-border: var(--color-dropdown-border);
+$color-dropdown-item-hover: var(--color-dropdown-item-hover);
+$color-dropdown-item-active: var(--color-dropdown-item-active);
+$color-dropdown-shadow: var(--color-dropdown-shadow);
+$color-menu-dropdown-bg: var(--color-menu-dropdown-bg);
+$color-menu-dropdown-border: var(--color-menu-dropdown-border);
+$color-menu-dropdown-shadow: var(--color-menu-dropdown-shadow);
+
+//
+// -----------------------------------------------
+// Forms | Settings
+// -----------------------------------------------
+//
+$color-input-bg: var(--color-input-bg);
+$color-input-border: var(--color-input-border);
+$color-input-text: var(--color-input-text);
+$color-input-placeholder: var(--color-input-placeholder);
+$color-select-bg: var(--color-select-bg);
+$color-select-border: var(--color-select-border);
+$color-toggle-bg: var(--color-toggle-bg);
+$color-toggle-thumb: var(--color-toggle-thumb);
+$color-option-border: var(--color-option-border);
+$color-option-text: var(--color-option-text);
+$color-slider-track: var(--color-slider-track);
+$color-slider-fill: var(--color-slider-fill);
+$color-slider-thumb: var(--color-slider-thumb);
+$color-slider-value: var(--color-slider-value);
+$color-settings-sidebar-bg: var(--color-settings-sidebar-bg);
+$color-settings-main-bg: var(--color-settings-main-bg);
+$color-settings-row-border: var(--color-settings-row-border);
+$color-settings-ghost-active-bg: var(--color-settings-ghost-active-bg);
+$color-settings-header-text: var(--color-settings-header-text);
+$color-theme-card-hover-border: var(--color-theme-card-hover-border);
+$color-theme-card-selected-ring: var(--color-theme-card-selected-ring);
+$color-accent-swatch-hover-border: var(--color-accent-swatch-hover-border);
+$color-accent-swatch-selected-ring: var(--color-accent-swatch-selected-ring);
+$color-accent-custom-border: var(--color-accent-custom-border);
+$color-accent-custom-bg: var(--color-accent-custom-bg);
+$color-accent-custom-icon: var(--color-accent-custom-icon);
+$color-voice-turn-orb-idle-bg: var(--color-voice-turn-orb-idle-bg);
+$color-voice-turn-orb-active-bg: var(--color-voice-turn-orb-active-bg);
+$color-voice-turn-orb-idle-icon: var(--color-voice-turn-orb-idle-icon);
+$color-voice-turn-orb-active-icon: var(--color-voice-turn-orb-active-icon);
+$color-voice-turn-glow-start: var(--color-voice-turn-glow-start);
+$color-voice-turn-glow-end: var(--color-voice-turn-glow-end);
+$color-voice-turn-alert-bg: var(--color-voice-turn-alert-bg);
+$color-voice-turn-alert-border: var(--color-voice-turn-alert-border);
+$color-voice-turn-orb-shadow: var(--color-voice-turn-orb-shadow);
+$color-voice-turn-orb-shadow-hover: var(--color-voice-turn-orb-shadow-hover);
+$color-voice-turn-chat-bg: var(--color-voice-turn-chat-bg);
+$color-voice-turn-chat-border: var(--color-voice-turn-chat-border);
+$color-voice-turn-status-text: var(--color-voice-turn-status-text);
+
+//
+// -----------------------------------------------
+// Button
+// -----------------------------------------------
+//
+$color-btn-primary-bg: var(--color-btn-primary-bg);
+$color-btn-primary-bg-hover: var(--color-btn-primary-bg-hover);
+$color-btn-primary-text: var(--color-btn-primary-text);
+$color-btn-primary-text-hover: var(--color-btn-primary-text-hover);
+$color-btn-primary-border: var(--color-btn-primary-border);
+$color-btn-primary-border-hover: var(--color-btn-primary-border-hover);
+
+$color-btn-secondary-bg: var(--color-btn-secondary-bg);
+$color-btn-secondary-bg-hover: var(--color-btn-secondary-bg-hover);
+$color-btn-secondary-text: var(--color-btn-secondary-text);
+$color-btn-secondary-text-hover: var(--color-btn-secondary-text-hover);
+$color-btn-secondary-border: var(--color-btn-secondary-border);
+$color-btn-secondary-border-hover: var(--color-btn-secondary-border-hover);
+
+$color-btn-ghost-bg: var(--color-btn-ghost-bg);
+$color-btn-ghost-bg-hover: var(--color-btn-ghost-bg-hover);
+$color-btn-ghost-text: var(--color-btn-ghost-text);
+$color-btn-ghost-text-hover: var(--color-btn-ghost-text-hover);
+$color-btn-ghost-border: var(--color-btn-ghost-border);
+$color-btn-ghost-border-hover: var(--color-btn-ghost-border-hover);
+
+$color-btn-danger-bg: var(--color-btn-danger-bg);
+$color-btn-danger-bg-hover: var(--color-btn-danger-bg-hover);
+$color-btn-danger-text: var(--color-btn-danger-text);
+$color-btn-danger-text-hover: var(--color-btn-danger-text-hover);
+$color-btn-danger-border: var(--color-btn-danger-border);
+$color-btn-danger-border-hover: var(--color-btn-danger-border-hover);
+
+//
+// -----------------------------------------------
+// Modal | Toast | Menus | Downloader
+// -----------------------------------------------
+//
+$color-modal-backdrop: var(--color-modal-backdrop);
+$color-modal-shadow-primary: var(--color-modal-shadow-primary);
+$color-modal-shadow-secondary: var(--color-modal-shadow-secondary);
+
+$color-toast-bg: var(--color-toast-bg);
+$color-toast-text: var(--color-toast-text);
+$color-toast-close-text: var(--color-toast-close-text);
+$color-toast-close-text-hover: var(--color-toast-close-text-hover);
+$color-toast-close-bg-hover: var(--color-toast-close-bg-hover);
+$color-toast-shadow: var(--color-toast-shadow);
+$color-toast-outline: var(--color-toast-outline);
+$color-toast-success: var(--color-toast-success);
+$color-toast-success-border: var(--color-toast-success-border);
+$color-toast-error: var(--color-toast-error);
+$color-toast-error-border: var(--color-toast-error-border);
+$color-toast-warning: var(--color-toast-warning);
+$color-toast-warning-border: var(--color-toast-warning-border);
+$color-toast-info: var(--color-toast-info);
+$color-toast-info-border: var(--color-toast-info-border);
+
+$color-downloads-menu-bg: var(--color-downloads-menu-bg);
+$color-downloads-menu-border: var(--color-downloads-menu-border);
+$color-downloads-menu-shadow: var(--color-downloads-menu-shadow);
+$color-downloads-menu-item-bg: var(--color-downloads-menu-item-bg);
+$color-downloads-menu-progress-track: var(--color-downloads-menu-progress-track);
+$color-downloads-menu-progress-fill: var(--color-downloads-menu-progress-fill);
+
+$color-downloader-surface: var(--color-downloader-surface);
+$color-downloader-progress-track: var(--color-downloader-progress-track);
+$color-downloader-progress-fill: var(--color-downloader-progress-fill);
+$color-downloader-badge-neutral-bg: var(--color-downloader-badge-neutral-bg);
+$color-downloader-badge-neutral-border: var(--color-downloader-badge-neutral-border);
+$color-downloader-badge-neutral-text: var(--color-downloader-badge-neutral-text);
+$color-downloader-badge-compatible-bg: var(--color-downloader-badge-compatible-bg);
+$color-downloader-badge-compatible-border: var(--color-downloader-badge-compatible-border);
+$color-downloader-badge-compatible-text: var(--color-downloader-badge-compatible-text);
+$color-downloader-badge-incompatible-bg: var(--color-downloader-badge-incompatible-bg);
+$color-downloader-badge-incompatible-border: var(--color-downloader-badge-incompatible-border);
+$color-downloader-badge-incompatible-text: var(--color-downloader-badge-incompatible-text);
+$color-downloader-badge-warning-bg: var(--color-downloader-badge-warning-bg);
+$color-downloader-badge-warning-border: var(--color-downloader-badge-warning-border);
+$color-downloader-badge-warning-text: var(--color-downloader-badge-warning-text);
+$color-downloader-badge-files-bg: var(--color-downloader-badge-files-bg);
+$color-downloader-badge-files-border: var(--color-downloader-badge-files-border);
+$color-downloader-badge-files-text: var(--color-downloader-badge-files-text);
+$color-downloader-badge-downloads-bg: var(--color-downloader-badge-downloads-bg);
+$color-downloader-badge-downloads-border: var(--color-downloader-badge-downloads-border);
+$color-downloader-badge-downloads-text: var(--color-downloader-badge-downloads-text);
+$color-downloader-badge-likes-bg: var(--color-downloader-badge-likes-bg);
+$color-downloader-badge-likes-border: var(--color-downloader-badge-likes-border);
+$color-downloader-badge-likes-text: var(--color-downloader-badge-likes-text);

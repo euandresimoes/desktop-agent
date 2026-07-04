@@ -1,0 +1,199 @@
+:root,
+[data-theme="dark"] {
+  //
+  // -----------------------------------------------
+  // Base
+  // -----------------------------------------------
+  //
+  --color-app-bg: #101012;
+
+  --color-text-primary: #e9e9e9;
+  --color-text-secondary: #d3d3d3;
+  --color-text-muted: #7a7a7a;
+  --color-text-inverse: #151515;
+
+  --color-shadow: rgba(0, 0, 0, 0.262);
+
+  --color-base: #171717;
+  --color-surface: #1e1e1e;
+
+  --color-border-default: #292929;
+  --color-border-active: #383838;
+
+  --color-app-accent: #7c0bcd;
+  --color-app-accent-hover: #520987;
+
+  --color-app-scrollbar-thumb: #ffffff08;
+  --color-app-scrollbar-thumb-hover: #ffffff21;
+  --color-app-scrollbar-track: #00000008;
+
+  //
+  // -----------------------------------------------
+  // Topbar
+  // -----------------------------------------------
+  //
+  --color-topbar-bg: var(--color-base);
+
+  //
+  // -----------------------------------------------
+  // View | Main Content
+  // -----------------------------------------------
+  //
+  --color-app-view-bg: var(--color-base);
+
+  //
+  // -----------------------------------------------
+  // Status Bar
+  // -----------------------------------------------
+  //
+  --color-statusbar-bg: var(--color-base);
+
+  //
+  // -----------------------------------------------
+  // Dropdown
+  // -----------------------------------------------
+  //
+  --color-dropdown-bg: var(--color-base);
+  --color-dropdown-border: var(--color-border-default);
+  --color-dropdown-item-hover: var(--color-surface);
+  --color-dropdown-item-active: var(--color-surface);
+  --color-dropdown-shadow: var(--color-shadow);
+  --color-menu-dropdown-bg: rgba(24, 24, 24, 0.94);
+  --color-menu-dropdown-border: var(--color-border-default);
+  --color-menu-dropdown-shadow: rgba(0, 0, 0, 0.34);
+
+  //
+  // -----------------------------------------------
+  // Forms | Settings
+  // -----------------------------------------------
+  //
+  --color-input-bg: #202022;
+  --color-input-border: var(--color-border-default);
+  --color-input-text: var(--color-text-primary);
+  --color-input-placeholder: #8a8a8f;
+  --color-select-bg: #1d1d1f;
+  --color-select-border: #3a3a3f;
+  --color-toggle-bg: #5a5a5f;
+  --color-toggle-thumb: #ffffff;
+  --color-option-border: #5c5c61;
+  --color-option-text: var(--color-text-primary);
+  --color-slider-track: #2d2d31;
+  --color-slider-fill: var(--color-app-accent);
+  --color-slider-thumb: #f4f4f5;
+  --color-slider-value: var(--color-text-secondary);
+  --color-settings-sidebar-bg: var(--color-surface);
+  --color-settings-main-bg: var(--color-base);
+  --color-settings-row-border: #2a2a2f;
+  --color-settings-ghost-active-bg: #303033;
+  --color-settings-header-text: var(--color-text-primary);
+  --color-theme-card-hover-border: #46464b;
+  --color-theme-card-selected-ring: rgba(124, 11, 205, 0.42);
+  --color-accent-swatch-hover-border: var(--color-border-active);
+  --color-accent-swatch-selected-ring: rgba(124, 11, 205, 0.35);
+  --color-accent-custom-border: #ffffff;
+  --color-accent-custom-bg: #000000;
+  --color-accent-custom-icon: #ffffff;
+  --color-voice-turn-orb-idle-bg: var(--color-app-accent);
+  --color-voice-turn-orb-active-bg: var(--color-app-accent);
+  --color-voice-turn-orb-idle-icon: var(--color-text-inverse);
+  --color-voice-turn-orb-active-icon: var(--color-text-inverse);
+  --color-voice-turn-glow-start: rgba(233, 233, 233, 0.14);
+  --color-voice-turn-glow-end: rgba(233, 233, 233, 0);
+  --color-voice-turn-alert-bg: rgba(255, 255, 255, 0.04);
+  --color-voice-turn-alert-border: var(--color-border-default);
+  --color-voice-turn-orb-shadow: rgba(0, 0, 0, 0.16);
+  --color-voice-turn-orb-shadow-hover: rgba(0, 0, 0, 0.2);
+  --color-voice-turn-chat-bg: rgba(28, 28, 29, 0.6);
+  --color-voice-turn-chat-border: #292929;
+  --color-voice-turn-status-text: var(--color-text-secondary);
+
+  //
+  // -----------------------------------------------
+  // Button
+  // -----------------------------------------------
+  //
+  --color-btn-primary-bg: var(--color-app-accent);
+  --color-btn-primary-bg-hover: var(--color-app-accent-hover);
+  --color-btn-primary-text: var(--color-text-primary);
+  --color-btn-primary-text-hover: var(--color-text-primary);
+  --color-btn-primary-border: var(--color-app-accent);
+  --color-btn-primary-border-hover: var(--color-app-accent-hover);
+
+  --color-btn-secondary-bg: #00000000;
+  --color-btn-secondary-bg-hover: #1f1f1f;
+  --color-btn-secondary-text: var(--color-text-muted);
+  --color-btn-secondary-text-hover: var(--color-text-primary);
+  --color-btn-secondary-border: var(--color-border-default);
+  --color-btn-secondary-border-hover: var(--color-border-active);
+
+  --color-btn-ghost-bg: transparent;
+  --color-btn-ghost-bg-hover: #1f1f1f;
+  --color-btn-ghost-text: var(--color-text-muted);
+  --color-btn-ghost-text-hover: var(--color-text-primary);
+  --color-btn-ghost-border: transparent;
+  --color-btn-ghost-border-hover: transparent;
+
+  --color-btn-danger-bg: #ff6c6c12;
+  --color-btn-danger-bg-hover: #ff47562e;
+  --color-btn-danger-text: #ff47568a;
+  --color-btn-danger-text-hover: #ff6b6bdc;
+  --color-btn-danger-border: #ff6b6b26;
+  --color-btn-danger-border-hover: #ff6b6b4a;
+
+  //
+  // -----------------------------------------------
+  // Modal | Toast | Menus | Downloader
+  // -----------------------------------------------
+  //
+  --color-modal-backdrop: rgba(0, 0, 0, 0.205);
+  --color-modal-shadow-primary: rgba(0, 0, 0, 0.262);
+  --color-modal-shadow-secondary: rgba(0, 0, 0, 0.262);
+
+  --color-toast-bg: #1e1e24;
+  --color-toast-text: #e4e4e7;
+  --color-toast-close-text: #71717a;
+  --color-toast-close-text-hover: #e4e4e7;
+  --color-toast-close-bg-hover: rgba(255, 255, 255, 0.07);
+  --color-toast-shadow: rgba(0, 0, 0, 0.45);
+  --color-toast-outline: rgba(255, 255, 255, 0.04);
+  --color-toast-success: #34d399;
+  --color-toast-success-border: rgba(52, 211, 153, 0.25);
+  --color-toast-error: #f87171;
+  --color-toast-error-border: rgba(248, 113, 113, 0.25);
+  --color-toast-warning: #fbbf24;
+  --color-toast-warning-border: rgba(251, 191, 36, 0.25);
+  --color-toast-info: #60a5fa;
+  --color-toast-info-border: rgba(96, 165, 250, 0.25);
+
+  --color-downloads-menu-bg: rgba(23, 23, 23, 0.92);
+  --color-downloads-menu-border: var(--color-border-default);
+  --color-downloads-menu-shadow: rgba(0, 0, 0, 0.28);
+  --color-downloads-menu-item-bg: var(--color-surface);
+  --color-downloads-menu-progress-track: var(--color-base);
+  --color-downloads-menu-progress-fill: var(--color-text-primary);
+
+  --color-downloader-surface: var(--color-surface);
+  --color-downloader-progress-track: var(--color-base);
+  --color-downloader-progress-fill: var(--color-text-primary);
+  --color-downloader-badge-neutral-bg: rgba(255, 255, 255, 0.03);
+  --color-downloader-badge-neutral-border: rgba(255, 255, 255, 0.04);
+  --color-downloader-badge-neutral-text: var(--color-text-muted);
+  --color-downloader-badge-compatible-bg: rgba(49, 196, 141, 0.12);
+  --color-downloader-badge-compatible-border: rgba(49, 196, 141, 0.18);
+  --color-downloader-badge-compatible-text: #7ce6bd;
+  --color-downloader-badge-incompatible-bg: rgba(224, 72, 72, 0.12);
+  --color-downloader-badge-incompatible-border: rgba(224, 72, 72, 0.18);
+  --color-downloader-badge-incompatible-text: #ff8e8e;
+  --color-downloader-badge-warning-bg: rgba(245, 183, 48, 0.12);
+  --color-downloader-badge-warning-border: rgba(245, 183, 48, 0.18);
+  --color-downloader-badge-warning-text: #ffd36d;
+  --color-downloader-badge-files-bg: rgba(93, 138, 255, 0.12);
+  --color-downloader-badge-files-border: rgba(93, 138, 255, 0.18);
+  --color-downloader-badge-files-text: #9db8ff;
+  --color-downloader-badge-downloads-bg: rgba(76, 201, 240, 0.12);
+  --color-downloader-badge-downloads-border: rgba(76, 201, 240, 0.18);
+  --color-downloader-badge-downloads-text: #8ee7ff;
+  --color-downloader-badge-likes-bg: rgba(255, 120, 168, 0.12);
+  --color-downloader-badge-likes-border: rgba(255, 120, 168, 0.18);
+  --color-downloader-badge-likes-text: #ff9bc2;
+}

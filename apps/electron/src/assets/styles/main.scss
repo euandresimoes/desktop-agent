@@ -1,0 +1,36 @@
+@use "./themes.scss";
+
+* {
+  box-sizing: border-box;
+
+  font-family: 'Inter', sans-serif;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-app-bg);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-app-scrollbar-thumb);
+  border-radius: 4px;
+
+  &:hover {
+    background: var(--color-app-scrollbar-thumb-hover);
+  }
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-app-scrollbar-track);
+}

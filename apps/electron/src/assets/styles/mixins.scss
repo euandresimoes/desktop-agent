@@ -1,0 +1,808 @@
+@use "./tokens.scss" as *;
+
+//
+// -----------------------------------------------
+// Layout
+// -----------------------------------------------
+//
+@mixin app-layout {
+  width: 100vw;
+  height: 100vh;
+
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+//
+// Topbar
+//
+@mixin app-topbar-layout {
+  width: 100%;
+  height: 45px;
+  max-height: 45px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+@mixin app-topbar-style {
+  background: $color-topbar-bg;
+
+  border-bottom: 1px solid $color-border-default;
+}
+
+//
+// Main Content = Sidebar + View
+//
+@mixin app-main-content-layout {
+  width: 100%;
+  height: 100%;
+
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+@mixin app-main-content-style {
+  background: transparent;
+}
+
+//
+// View
+//
+@mixin app-view-layout {
+  width: 100%;
+  height: 100%;
+
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+@mixin app-view-style {
+  background: $color-app-view-bg;
+}
+
+//
+// Status Bar
+//
+@mixin app-statusbar-layout {
+  width: 100%;
+  height: 30px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@mixin app-statusbar-style {
+  background: $color-statusbar-bg;
+
+  border-top: 1px solid $color-border-default;
+}
+
+@mixin base-dropdown-trigger {
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+@mixin base-dropdown-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  min-width: 220px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  background: $color-dropdown-bg;
+  box-shadow: 0 10px 28px $color-dropdown-shadow;
+  overflow: hidden;
+}
+
+@mixin base-dropdown-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid $color-border-default;
+  background: transparent;
+  color: $color-text-secondary;
+  cursor: pointer;
+
+  &:hover {
+    background: $color-dropdown-item-hover;
+    color: $color-text-primary;
+  }
+}
+
+@mixin base-dropdown-item-active {
+  background: $color-dropdown-item-active;
+  color: $color-text-primary;
+}
+
+@mixin base-menu-dropdown-panel {
+  @include base-dropdown-panel;
+  min-width: 230px;
+  max-width: 320px;
+  border: 1px solid $color-menu-dropdown-border;
+  border-radius: 8px;
+  background: $color-menu-dropdown-bg;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 16px 42px $color-menu-dropdown-shadow;
+  overflow: visible;
+}
+
+@mixin base-menu-dropdown-section {
+  display: flex;
+  flex-direction: column;
+
+  &:not(:last-child) {
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid $color-border-default;
+  }
+}
+
+@mixin base-menu-dropdown-item {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: $color-text-secondary;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+@mixin base-menu-dropdown-item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+@mixin base-menu-dropdown-shortcut {
+  color: $color-text-muted;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+@mixin base-input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 5px;
+  border: 1px solid $color-border-default;
+  background: $color-base;
+  color: $color-text-primary;
+  font-size: 13px;
+  outline: none;
+
+  transition: border-color 0.15s ease;
+
+  &::placeholder {
+    color: $color-input-placeholder;
+  }
+
+  &:focus {
+    border-color: $color-app-accent;
+  }
+}
+
+@mixin base-select-trigger {
+  max-width: 250px;
+  min-height: 34px;
+  max-height: 34px;
+  padding: 0 10px 0 12px;
+  border-radius: 5px;
+  border: 1px solid $color-border-default;
+  background: $color-base;
+  color: $color-text-primary;
+  font-size: 13px;
+}
+
+@mixin base-textarea {
+  @include base-input;
+  min-height: 108px;
+  padding: 10px 12px;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+@mixin base-slider {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  appearance: none;
+  background: linear-gradient(
+    to right,
+    $color-slider-fill 0%,
+    $color-slider-fill var(--slider-progress, 50%),
+    $color-slider-track var(--slider-progress, 50%),
+    $color-slider-track 100%
+  );
+  outline: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    width: 14px;
+    height: 14px;
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    background: $color-slider-thumb;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  }
+
+  &::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 999px;
+    background: $color-slider-thumb;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.24);
+  }
+}
+
+@mixin base-slider-value {
+  min-width: 42px;
+  color: $color-slider-value;
+  font-size: 12px;
+  text-align: right;
+}
+
+@mixin base-toggle {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: $color-toggle-bg;
+  border: 0;
+  position: relative;
+  transition: background 0.18s ease;
+
+  &.is-active {
+    background: $color-app-accent;
+  }
+}
+
+@mixin base-toggle-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: $color-toggle-thumb;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.18s ease;
+}
+
+@mixin base-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: $color-option-text;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+@mixin base-option-marker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid $color-option-border;
+  position: relative;
+}
+
+@mixin settings-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+@mixin settings-sidebar {
+  width: 200px;
+  padding: 14px 12px;
+  background: $color-settings-sidebar-bg;
+  border-right: 1px solid $color-settings-row-border;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+@mixin settings-sidebar-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: $color-text-muted;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+
+  svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  &:hover {
+    color: $color-text-primary;
+  }
+
+  &.active {
+    background: $color-settings-ghost-active-bg;
+    color: $color-text-primary;
+  }
+}
+
+@mixin settings-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: $color-settings-main-bg;
+  display: flex;
+  flex-direction: column;
+}
+
+@mixin settings-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px 24px;
+}
+
+@mixin settings-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: $color-text-primary;
+  margin: 0 0 14px;
+}
+
+@mixin settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 14px 0;
+  border-top: 1px solid $color-settings-row-border;
+}
+
+@mixin settings-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  strong {
+    color: $color-text-primary;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  span {
+    color: $color-text-muted;
+    font-size: 13px;
+    line-height: 1.35;
+  }
+}
+
+@mixin settings-compact-panel {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+@mixin settings-submodal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@mixin settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@mixin settings-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  label {
+    color: $color-text-secondary;
+    font-size: 13px;
+    font-weight: 500;
+  }
+}
+
+@mixin settings-theme-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 148px));
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+@mixin theme-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: $color-text-secondary;
+  text-align: left;
+  cursor: pointer;
+}
+
+@mixin theme-card-preview {
+  width: 148px;
+  height: 88px;
+  padding: 6px;
+  border-radius: 11px;
+  border: 1px solid $color-border-default;
+  background: transparent;
+  overflow: hidden;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+@mixin theme-card-label {
+  color: $color-text-secondary;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+@mixin accent-swatch-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 86px));
+  gap: 12px;
+  justify-content: flex-start;
+}
+
+@mixin accent-swatch-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: $color-text-secondary;
+  cursor: pointer;
+}
+
+@mixin accent-swatch-chip {
+  width: 86px;
+  height: 62px;
+  border-radius: 12px;
+  border: 1px solid $color-border-default;
+  background: $color-surface;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+@mixin accent-swatch-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+@mixin accent-swatch-label {
+  width: 100%;
+  text-align: center;
+  color: $color-text-secondary;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+//
+// -----------------------------------------------
+// Components
+// -----------------------------------------------
+//
+
+//
+// Base Button
+//
+@mixin base-button {
+  width: 100%;
+  min-height: 32px;
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+
+  outline: none;
+
+  border-radius: 6px;
+
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1;
+
+  svg {
+    width: 14px;
+    height: 14px;
+    stroke-width: 1.5;
+  }
+
+  cursor: pointer;
+  user-select: none;
+}
+
+//
+// Base Button Styles
+//
+@mixin button-primary {
+  background: $color-btn-primary-bg;
+  color: $color-btn-primary-text;
+  border: 1px solid $color-btn-primary-border;
+
+  &:hover {
+    background: $color-btn-primary-bg-hover;
+    color: $color-btn-primary-text-hover;
+    border: 1px solid $color-btn-primary-border-hover;
+  }
+}
+@mixin button-secondary {
+  background: $color-btn-secondary-bg;
+  color: $color-btn-secondary-text;
+  border: 1px solid $color-btn-secondary-border;
+
+  &:hover {
+    background: $color-btn-secondary-bg-hover;
+    color: $color-btn-secondary-text-hover;
+    border: 1px solid $color-btn-secondary-border-hover;
+  }
+}
+@mixin button-ghost {
+  background: $color-btn-ghost-bg;
+  color: $color-btn-ghost-text;
+  border: 1px solid $color-btn-ghost-border;
+
+  &:hover {
+    background: $color-btn-ghost-bg-hover;
+    color: $color-btn-ghost-text-hover;
+    border: 1px solid $color-btn-ghost-border-hover;
+  }
+}
+@mixin button-danger {
+  background: $color-btn-danger-bg;
+  color: $color-btn-danger-text;
+  border: 1px solid $color-btn-danger-border;
+
+  &:hover {
+    background: $color-btn-danger-bg-hover;
+    color: $color-btn-danger-text-hover;
+    border: 1px solid $color-btn-danger-border-hover;
+  }
+}
+
+//
+// -----------------------------------------------
+// Base Modal
+// -----------------------------------------------
+//
+@mixin base-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: $color-modal-backdrop;
+  backdrop-filter: blur(1px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+@mixin base-modal-container {
+  width: var(--modal-width, 90vw);
+  height: var(--modal-height, 85vh);
+  max-width: 1000px;
+  background: var(--color-base);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow:
+    0 20px 25px -5px $color-modal-shadow-primary,
+    0 10px 10px -5px $color-modal-shadow-secondary;
+}
+
+@mixin base-modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-btn-ghost-text);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+
+  &:hover {
+    background: $color-btn-ghost-bg-hover;
+    color: $color-btn-ghost-text-hover;
+  }
+}
+
+@mixin base-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: visible;
+}
+
+//
+// -----------------------------------------------
+// Voice Turn View
+// -----------------------------------------------
+//
+@mixin voice-turn-view {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 20px;
+  overflow-y: auto;
+  width: 100%;
+  height: 100%;
+  background:
+    var(--voice-turn-glow, transparent),
+    $color-base;
+}
+
+@mixin voice-turn-settings-bar {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 20px;
+  height: 40px;
+}
+
+@mixin voice-turn-assistant-content {
+  flex: 1;
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+}
+
+@mixin voice-turn-alert-box {
+  width: 100%;
+  background: $color-voice-turn-alert-bg;
+  border: 1px solid $color-voice-turn-alert-border;
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  color: $color-text-secondary;
+}
+
+@mixin voice-turn-orb-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+@mixin voice-turn-orb-button {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 1px solid $color-border-default;
+  background: $color-voice-turn-orb-idle-bg;
+  color: $color-voice-turn-orb-idle-icon;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform 0.12s ease-out,
+    box-shadow 0.16s ease-out,
+    background 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+  box-shadow: 0 10px 28px $color-voice-turn-orb-shadow;
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 34px $color-voice-turn-orb-shadow-hover;
+  }
+
+  &.recording {
+    background: $color-voice-turn-orb-active-bg;
+    color: $color-voice-turn-orb-active-icon;
+    border-color: $color-voice-turn-orb-active-bg;
+  }
+
+  &.thinking {
+    background: $color-voice-turn-orb-active-bg;
+    color: $color-voice-turn-orb-active-icon;
+    border-color: $color-voice-turn-orb-active-bg;
+  }
+
+  &.speaking {
+    background: $color-voice-turn-orb-active-bg;
+    color: $color-voice-turn-orb-active-icon;
+    border-color: $color-voice-turn-orb-active-bg;
+  }
+
+  &.loading,
+  &.not_ready {
+    background: $color-voice-turn-orb-idle-bg;
+    color: $color-text-inverse;
+  }
+}
+
+@mixin voice-turn-chat-mirror {
+  width: 100%;
+  background: $color-voice-turn-chat-bg;
+  border: 1px solid $color-voice-turn-chat-border;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(10px);
+}

@@ -1,0 +1,30 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:tts\" \"npm run dev:stt\" \"npm run dev:api\"",
+    "dev:api": "ts-node src/index.ts",
+    "dev:tts": "ts-node src/scripts/start-tts-dev.ts",
+    "dev:stt": "ts-node src/scripts/start-stt-dev.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "Auvexis",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "concurrently": "^10.0.3",
+    "prettier": "3.8.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^10.0.0",
+    "fastify": "^5.8.5",
+    "node-llama-cpp": "^3.18.1"
+  }
+}

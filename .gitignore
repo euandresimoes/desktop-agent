@@ -1,0 +1,56 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+apps/*/node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+.cache/
+.vite/
+.webpack/
+.nyc_output/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local runtime data
+storage/
+tmp/
+.tmp/
+*.pid
+*.pid.lock
+
+# Package artifacts
+*.tgz

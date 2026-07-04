@@ -1,0 +1,20 @@
+{
+  "name": "desktop-agent",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently --kill-others --raw --prefix-colors \"bgBlue.bold,bgMagenta.bold\" --names \"API,ELECTRON\" \"npm run dev:api\" \"npm run dev:electron\"",
+    "start": "concurrently --kill-others --raw --prefix-colors \"bgBlue.bold,bgMagenta.bold\" --names \"API,ELECTRON\" \"npm run start:api\" \"npm run start:electron\"",
+    "dev:api": "npm --prefix apps/api run dev",
+    "dev:electron": "npm --prefix apps/electron start",
+    "start:api": "npm --prefix apps/api run start",
+    "start:electron": "npm --prefix apps/electron start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}
