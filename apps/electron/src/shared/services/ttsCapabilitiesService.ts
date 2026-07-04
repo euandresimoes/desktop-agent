@@ -1,4 +1,4 @@
-import { fetchJsonOrThrow } from "../utils/http";
+import { fetchJsonOrThrow } from "../utils/http.ts";
 
 const API_BASE = "http://localhost:35421/api/v1";
 
@@ -39,6 +39,21 @@ export function mapTTSCapabilitiesToModeOptions(
   }
 
   return options;
+}
+
+export function normalizePlaybackModeAgainstCapabilities(
+  preferredMode: TTSPlaybackMode,
+  capabilities: TTSCapabilitiesResponse | null,
+) {
+  if (!capabilities) {
+    return "standard" as const;
+  }
+
+  if (preferredMode === "stream" && !capabilities.playbackModes.stream.supported) {
+    return "standard" as const;
+  }
+
+  return preferredMode;
 }
 
 export async function fetchTTSCapabilities() {

@@ -19,6 +19,12 @@ import { APP_THEMES } from "../../shared/config/appThemes";
 import { listAudioDevices } from "../../shared/services/audioDevicesService";
 import { useAppSettingsService } from "../../shared/services/appSettingsService";
 import {
+  fetchTTSCapabilities,
+  mapTTSCapabilitiesToModeOptions,
+  normalizePlaybackModeAgainstCapabilities,
+  type TTSCapabilitiesResponse,
+} from "../../shared/services/ttsCapabilitiesService";
+import {
   type AppAccentMode,
   type AppSettings,
   type AppThemeId,
@@ -49,6 +55,7 @@ const activeTheme = computed(
 
 const inputDevices = ref<BaseSelectOption[]>([]);
 const outputDevices = ref<BaseSelectOption[]>([]);
+const ttsCapabilities = ref<TTSCapabilitiesResponse | null>(null);
 const agentNameDraft = ref("");
 const responseLanguageDraft = ref("");
 const customSystemPromptDraft = ref("");
@@ -63,6 +70,14 @@ const outputDeviceOptions = computed<BaseSelectOption[]>(() => [
   { value: "", label: "System default output" },
   ...outputDevices.value,
 ]);
+
+const ttsPlaybackModeOptions = computed<BaseSelectOption[]>(() => {
+  if (!ttsCapabilities.value) {
+    return [{ value: "standard", label: "Standard" }];
+  }
+
+  return mapTTSCapabilitiesToModeOptions(ttsCapabilities.value);
+});
 
 const handleToggle =
   (key: keyof Pick<AppSettings, "launchMaximized" | "openOnStartup" | "closeToTray" | "autoWarmupLlm">) =>
@@ -96,6 +111,10 @@ const handleMicrophoneGainChange = (value: number) => {
 
 const handleOutputVolumeChange = (value: number) => {
   void updateSettings({ outputVolume: value });
+};
+
+const handleTtsPlaybackModeChange = (value: string) => {
+  void updateSettings({ ttsPlaybackMode: value as AppSettings["ttsPlaybackMode"] });
 };
 
 const queueAdvancedUpdate = () => {
@@ -133,6 +152,23 @@ const refreshAudioDevices = async () => {
   }));
 };
 
+const refreshTTSCapabilities = async () => {
+  try {
+    ttsCapabilities.value = await fetchTTSCapabilities();
+
+    const normalizedMode = normalizePlaybackModeAgainstCapabilities(
+      settings.value.ttsPlaybackMode,
+      ttsCapabilities.value,
+    );
+
+    if (normalizedMode !== settings.value.ttsPlaybackMode) {
+      void updateSettings({ ttsPlaybackMode: normalizedMode });
+    }
+  } catch {
+    ttsCapabilities.value = null;
+  }
+};
+
 watch(
   () => props.isOpen,
   (isOpen) => {
@@ -141,6 +177,7 @@ watch(
         syncDraftsFromSettings();
       });
       void refreshAudioDevices();
+      void refreshTTSCapabilities();
       navigator.mediaDevices?.addEventListener?.("devicechange", refreshAudioDevices);
       return;
     }
@@ -353,6 +390,26 @@ onBeforeUnmount(() => {
               @update:modelValue="handleOutputVolumeChange"
             />
           </div>
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
+          <strong>TTS playback mode</strong>
+          <span>
+            {{
+              ttsCapabilities?.playbackModes.stream.experimental
+                ? "Choose between standard playback and an experimental streamed delivery mode."
+                : "Choose whether spoken responses should play after full synthesis or as streamed chunks."
+            }}
+          </span>
+        </template>
+        <template #control>
+          <BaseSelect
+            :model-value="settings.ttsPlaybackMode"
+            :options="ttsPlaybackModeOptions"
+            @update:modelValue="handleTtsPlaybackModeChange"
+          />
         </template>
       </BaseSettingsRow>
     </BaseSettingsSection>
