@@ -2,8 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { appSetupService } from '../app-setup/services.ts';
 import { piperTTSService } from './services.ts';
 import { llmService } from '../llama-cpp/services.ts';
+import { getTTSCapabilities } from './capabilities.ts';
 
 export async function piperTTSRoutes(app: FastifyInstance) {
+  app.get('/capabilities', async () => {
+    return getTTSCapabilities({
+      provider: 'piper',
+      supportsChunkedPostSynthesis: true,
+    });
+  });
+
   app.post('/speak', async (rq, rs) => {
     const body = rq.body as { text?: string };
 
