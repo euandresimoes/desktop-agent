@@ -4,9 +4,11 @@ export const APP_ACCENT_MODE_STORAGE_KEY = "desktop-agent-accent-mode";
 
 export const APP_THEME_IDS = ["dark"] as const;
 export const APP_ACCENT_MODES = ["theme", "custom"] as const;
+export const APP_TTS_PLAYBACK_MODES = ["standard", "stream"] as const;
 
 export type AppThemeId = (typeof APP_THEME_IDS)[number];
 export type AppAccentMode = (typeof APP_ACCENT_MODES)[number];
+export type AppTtsPlaybackMode = (typeof APP_TTS_PLAYBACK_MODES)[number];
 
 export interface AppSettings {
   launchMaximized: boolean;
@@ -23,6 +25,7 @@ export interface AppSettings {
   themeId: AppThemeId;
   accentMode: AppAccentMode;
   accentColor: string;
+  ttsPlaybackMode: AppTtsPlaybackMode;
 }
 
 export type AppSettingsPatch = Partial<AppSettings>;
@@ -42,6 +45,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   themeId: "dark",
   accentMode: "theme",
   accentColor: "#7c0bcd",
+  ttsPlaybackMode: "standard",
 };
 
 export const isAppThemeId = (value: unknown): value is AppThemeId =>
@@ -50,3 +54,9 @@ export const isAppThemeId = (value: unknown): value is AppThemeId =>
 export const isAppAccentMode = (value: unknown): value is AppAccentMode =>
   typeof value === "string" &&
   APP_ACCENT_MODES.includes(value as AppAccentMode);
+
+export const isAppTtsPlaybackMode = (
+  value: unknown,
+): value is AppTtsPlaybackMode =>
+  typeof value === "string" &&
+  APP_TTS_PLAYBACK_MODES.includes(value as AppTtsPlaybackMode);

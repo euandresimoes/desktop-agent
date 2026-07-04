@@ -5,6 +5,7 @@ import {
   DEFAULT_APP_SETTINGS,
   isAppAccentMode,
   isAppThemeId,
+  isAppTtsPlaybackMode,
   type AppSettings,
   type AppSettingsPatch,
 } from "../../shared/types/app-settings";
@@ -95,6 +96,10 @@ const sanitizePatch = (patch: AppSettingsPatch): AppSettingsPatch => {
 
   if (typeof patch.accentColor === "string" && patch.accentColor.trim()) {
     nextPatch.accentColor = patch.accentColor.trim();
+  }
+
+  if (isAppTtsPlaybackMode(patch.ttsPlaybackMode)) {
+    nextPatch.ttsPlaybackMode = patch.ttsPlaybackMode;
   }
 
   return nextPatch;
