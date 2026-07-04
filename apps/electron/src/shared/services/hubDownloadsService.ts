@@ -1,4 +1,5 @@
 import { computed, ref } from "vue";
+import { fetchJsonOrThrow } from "../utils/http";
 
 const API_BASE = "http://localhost:35421/api/v1";
 const dispatchModelsUpdated = () => {
@@ -7,6 +8,7 @@ const dispatchModelsUpdated = () => {
 };
 
 export type HubModelType = "llm" | "stt" | "tts";
+export type HubSearchSortOption = "featured" | "downloads" | "likes" | "updated" | "newest";
 
 export interface HubFileOption {
   fileName: string;
@@ -47,12 +49,29 @@ export interface HubInstallJob {
   installedModelId: string | null;
 }
 
+export type HubSttCompatibility =
+  | {
+      compatible: false;
+      provider: null;
+      requiredFiles: string[] | null;
+      statusLabel: "Incompatible" | "Missing files";
+      typeLabel: "Other" | "CTranslate2" | "Transformers";
+    }
+  | {
+      compatible: true;
+      provider: "faster-whisper" | "transformers";
+      requiredFiles: string[];
+      statusLabel: "Compatible";
+      typeLabel: "CTranslate2" | "Transformers";
+    };
+
 const jobs = ref<HubInstallJob[]>([]);
 const activeJob = ref<HubInstallJob | null>(null);
 const isSearching = ref(false);
 const searchResults = ref<HubModelSearchResult[]>([]);
 const nextCursor = ref<string | null>(null);
 const activePipelineTag = ref("all");
+const activeSort = ref<HubSearchSortOption>("featured");
 const selectedFiles = ref<Record<string, string>>({});
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -68,12 +87,11 @@ const recentDownloads = computed(() => jobs.value.slice(0, 8));
 
 const refreshJobs = async () => {
   const previousJobs = jobs.value;
-  const response = await fetch(`${API_BASE}/hub/install`);
-  if (!response.ok) {
-    throw new Error("Failed to refresh downloads");
-  }
-
-  const nextJobs = (await response.json()) as HubInstallJob[];
+  const nextJobs = await fetchJsonOrThrow<HubInstallJob[]>(
+    `${API_BASE}/hub/install`,
+    undefined,
+    "Failed to refresh downloads"
+  );
   jobs.value = nextJobs;
   activeJob.value =
     nextJobs.find((job) =>
@@ -108,6 +126,22 @@ const ensurePolling = () => {
 };
 
 export function useHubDownloadsService() {
+  const resolveSortParams = (sort: HubSearchSortOption) => {
+    switch (sort) {
+      case "downloads":
+        return { sort: "downloads", direction: "-1" as const };
+      case "likes":
+        return { sort: "likes", direction: "-1" as const };
+      case "updated":
+        return { sort: "lastModified", direction: "-1" as const };
+      case "newest":
+        return { sort: "createdAt", direction: "-1" as const };
+      case "featured":
+      default:
+        return { sort: "trendingScore", direction: "-1" as const };
+    }
+  };
+
   const getCompatibleSttBundle = (fileName: string, files: HubFileOption[]) => {
     const normalizedFileName = fileName.replace(/\\/g, "/");
 
@@ -125,11 +159,114 @@ export function useHubDownloadsService() {
       `${prefix}config.json`,
       `${prefix}tokenizer.json`,
       `${prefix}preprocessor_config.json`,
+      `${prefix}vocabulary.json`,
     ];
 
     return requiredFiles.every((requiredFile) => fileSet.has(requiredFile))
       ? requiredFiles
       : null;
+  };
+
+  const getCompatibleTransformersBundle = (fileName: string, files: HubFileOption[]) => {
+    const normalizedFileName = fileName.replace(/\\/g, "/");
+    const lowerFileName = normalizedFileName.toLowerCase();
+    const fileNameParts = normalizedFileName.split("/");
+    const baseName = fileNameParts[fileNameParts.length - 1]?.toLowerCase() ?? "";
+    const supportedWeightFile =
+      lowerFileName.endsWith(".safetensors") ||
+      baseName === "pytorch_model.bin" ||
+      baseName === "model.bin";
+
+    if (!supportedWeightFile) {
+      return null;
+    }
+
+    const directory = normalizedFileName.includes("/")
+      ? normalizedFileName.slice(0, normalizedFileName.lastIndexOf("/"))
+      : "";
+    const prefix = directory ? `${directory}/` : "";
+    const fileSet = new Set(files.map((file) => file.fileName.replace(/\\/g, "/")));
+    const configFile = `${prefix}config.json`;
+
+    if (!fileSet.has(configFile)) {
+      return null;
+    }
+
+    const processorFiles = [
+      `${prefix}preprocessor_config.json`,
+      `${prefix}processor_config.json`,
+      `${prefix}tokenizer.json`,
+      `${prefix}tokenizer_config.json`,
+      `${prefix}vocab.json`,
+      `${prefix}merges.txt`,
+      `${prefix}special_tokens_map.json`,
+    ].filter((requiredFile) => fileSet.has(requiredFile));
+
+    if (processorFiles.length === 0) {
+      return null;
+    }
+
+    return [normalizedFileName, configFile, ...processorFiles];
+  };
+
+  const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCompatibility => {
+    const fasterWhisperBundle = getCompatibleSttBundle(fileName, files);
+
+    if (fasterWhisperBundle) {
+      return {
+        compatible: true,
+        provider: "faster-whisper",
+        requiredFiles: fasterWhisperBundle,
+        statusLabel: "Compatible",
+        typeLabel: "CTranslate2",
+      };
+    }
+
+    const transformersBundle = getCompatibleTransformersBundle(fileName, files);
+
+    if (transformersBundle) {
+      return {
+        compatible: true,
+        provider: "transformers",
+        requiredFiles: transformersBundle,
+        statusLabel: "Compatible",
+        typeLabel: "Transformers",
+      };
+    }
+
+    const normalizedFileName = fileName.replace(/\\/g, "/").toLowerCase();
+
+    if (normalizedFileName.endsWith("/model.bin") || normalizedFileName === "model.bin") {
+      return {
+        compatible: false,
+        provider: null,
+        requiredFiles: null,
+        statusLabel: "Missing files",
+        typeLabel: "CTranslate2",
+      };
+    }
+
+    if (
+      normalizedFileName.endsWith(".safetensors") ||
+      normalizedFileName.endsWith("/pytorch_model.bin") ||
+      normalizedFileName === "pytorch_model.bin"
+    ) {
+      return {
+        compatible: false,
+        provider: null,
+        requiredFiles: null,
+        statusLabel: "Missing files",
+        typeLabel: "Transformers",
+      };
+    }
+
+    return {
+      compatible: false,
+      provider: null,
+      requiredFiles: null,
+      statusLabel: "Incompatible",
+      typeLabel: "Other",
+    };
   };
 
   const applyDefaultSelections = (results: HubModelSearchResult[], modelType: HubModelType) => {
@@ -148,7 +285,7 @@ export function useHubDownloadsService() {
     }
 
     if (modelType === "stt") {
-      return Boolean(getCompatibleSttBundle(fileName, files));
+      return getSttCompatibility(fileName, files).compatible;
     }
 
     if (!lower.endsWith(".onnx")) {
@@ -168,7 +305,7 @@ export function useHubDownloadsService() {
   const searchModels = async (
     query: string,
     modelType: HubModelType,
-    options?: { append?: boolean; pipelineTag?: string }
+    options?: { append?: boolean; pipelineTag?: string; sort?: HubSearchSortOption }
   ) => {
     const trimmedQuery = query.trim();
 
@@ -182,21 +319,19 @@ export function useHubDownloadsService() {
 
     try {
       const pipelineTag = options?.pipelineTag ?? activePipelineTag.value;
+      const sort = options?.sort ?? activeSort.value;
       if (!options?.append) {
         activePipelineTag.value = pipelineTag;
+        activeSort.value = sort;
       }
-      const response = await fetch(
-        `${API_BASE}/hub/models?q=${encodeURIComponent(trimmedQuery)}&pipelineTag=${encodeURIComponent(pipelineTag)}${
+      const sortParams = resolveSortParams(sort);
+      const payload = await fetchJsonOrThrow<HubSearchResponse>(
+        `${API_BASE}/hub/models?q=${encodeURIComponent(trimmedQuery)}&pipelineTag=${encodeURIComponent(pipelineTag)}&sort=${encodeURIComponent(sortParams.sort)}&direction=${encodeURIComponent(sortParams.direction)}${
           options?.append && nextCursor.value ? `&cursor=${encodeURIComponent(nextCursor.value)}` : ""
-        }`
+        }`,
+        undefined,
+        "Failed to search models"
       );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to search models");
-      }
-
-      const payload = (await response.json()) as HubSearchResponse;
       searchResults.value = options?.append
         ? [...searchResults.value, ...payload.items]
         : payload.items;
@@ -223,23 +358,20 @@ export function useHubDownloadsService() {
     fileName: string;
     displayName?: string;
   }) => {
-    const response = await fetch(`${API_BASE}/hub/install`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: input.modelType,
-        repoId: input.repoId,
-        fileName: input.fileName,
-        displayName: input.displayName,
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Failed to start download");
-    }
-
-    const job = (await response.json()) as HubInstallJob;
+    const job = await fetchJsonOrThrow<HubInstallJob>(
+      `${API_BASE}/hub/install`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: input.modelType,
+          repoId: input.repoId,
+          fileName: input.fileName,
+          displayName: input.displayName,
+        }),
+      },
+      "Failed to start download"
+    );
     activeJob.value = job;
     await refreshJobs();
     ensurePolling();
@@ -248,9 +380,13 @@ export function useHubDownloadsService() {
   };
 
   const cancelJob = async (jobId: string) => {
-    await fetch(`${API_BASE}/hub/install/${jobId}`, {
-      method: "DELETE",
-    });
+    await fetchJsonOrThrow(
+      `${API_BASE}/hub/install/${jobId}`,
+      {
+        method: "DELETE",
+      },
+      "Failed to cancel download"
+    );
     await refreshJobs();
   };
 
@@ -263,6 +399,7 @@ export function useHubDownloadsService() {
     searchResults,
     nextCursor,
     activePipelineTag,
+    activeSort,
     selectedFiles,
     refreshJobs,
     searchModels,
@@ -272,5 +409,7 @@ export function useHubDownloadsService() {
     ensurePolling,
     isCompatibleFile,
     getCompatibleSttBundle,
+    getCompatibleTransformersBundle,
+    getSttCompatibility,
   };
 }

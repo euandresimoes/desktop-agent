@@ -3,11 +3,13 @@ import path from 'node:path';
 import type {
   AddSTTModelInput,
   STTModelConfig,
+  STTProvider,
   TranscribeInput,
   TranscribeOutput,
   UpdateSTTModelInput,
 } from './types.ts';
 import { fileExists } from '../app-setup/utils.ts';
+import { AppError } from '../../shared/errors.ts';
 
 const userDataPath =
   process.env.USER_DATA_PATH ??
@@ -17,6 +19,13 @@ const STT_SERVER_URL = process.env.STT_SERVER_URL ?? 'http://127.0.0.1:35423';
 
 const sttModelsConfigPath = path.join(userDataPath, 'stt-models.json');
 const sttModelsDir = path.join(userDataPath, 'stt-models');
+
+type RemoteServiceErrorPayload = {
+  error?: string;
+  details?: string | null;
+  requestId?: string | null;
+  source?: string;
+};
 
 type STTModelsFile = {
   activeModelId: string | null;
@@ -30,6 +39,10 @@ type LocalSttValidationResult = {
 };
 
 class STTService {
+  private readonly supportedProviders = new Set<STTProvider>([
+    'faster-whisper',
+    'transformers',
+  ]);
   private readonly bundledModelIds = new Set([
     'tiny',
     'base',
@@ -70,7 +83,141 @@ class STTService {
     return id.trim().toLowerCase().replace(/\s+/g, '-');
   }
 
+  private async validateLocalFasterWhisperModelPath(
+    inputPath: string
+  ): Promise<LocalSttValidationResult> {
+    const stats = await fs.stat(inputPath);
+    const modelDirectory = stats.isDirectory()
+      ? inputPath
+      : path.dirname(inputPath);
+    const modelFilePath = stats.isDirectory()
+      ? path.join(inputPath, 'model.bin')
+      : inputPath;
+    const modelFileName = path.basename(modelFilePath).toLowerCase();
+
+    if (modelFileName !== 'model.bin') {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'This STT backend only supports Faster-Whisper/CTranslate2 bundles with a model.bin file',
+      };
+    }
+
+    const [
+      hasModelFile,
+      hasConfig,
+      hasTokenizer,
+      hasPreprocessorConfig,
+      hasVocabulary,
+    ] =
+      await Promise.all([
+        fileExists(modelFilePath),
+        fileExists(path.join(modelDirectory, 'config.json')),
+        fileExists(path.join(modelDirectory, 'tokenizer.json')),
+        fileExists(path.join(modelDirectory, 'preprocessor_config.json')),
+        fileExists(path.join(modelDirectory, 'vocabulary.json')),
+      ]);
+
+    if (
+      !hasModelFile ||
+      !hasConfig ||
+      !hasTokenizer ||
+      !hasPreprocessorConfig ||
+      !hasVocabulary
+    ) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Incomplete Faster-Whisper bundle. Expected model.bin, config.json, tokenizer.json, preprocessor_config.json, and vocabulary.json in the same folder',
+      };
+    }
+
+    return {
+      valid: true,
+      resolvedModelPath: modelDirectory,
+    };
+  }
+
+  private async validateLocalTransformersModelPath(
+    inputPath: string
+  ): Promise<LocalSttValidationResult> {
+    const stats = await fs.stat(inputPath);
+    const modelDirectory = stats.isDirectory()
+      ? inputPath
+      : path.dirname(inputPath);
+    const modelFileName = stats.isDirectory()
+      ? null
+      : path.basename(inputPath).toLowerCase();
+
+    const entries = await fs.readdir(modelDirectory);
+    const normalizedEntries = new Set(entries.map((entry) => entry.toLowerCase()));
+    const hasConfig = normalizedEntries.has('config.json');
+    const transformerWeightFiles = entries.filter((entry) => {
+      const lowerEntry = entry.toLowerCase();
+      return (
+        lowerEntry.endsWith('.safetensors') ||
+        lowerEntry === 'pytorch_model.bin' ||
+        lowerEntry === 'model.bin'
+      );
+    });
+    const hasProcessorArtifacts = [
+      'preprocessor_config.json',
+      'processor_config.json',
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'vocab.json',
+      'merges.txt',
+      'special_tokens_map.json',
+    ].some((fileName) => normalizedEntries.has(fileName));
+
+    if (!hasConfig) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason: 'Transformers STT model is missing config.json',
+      };
+    }
+
+    if (transformerWeightFiles.length === 0) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Transformers STT model is missing a supported weight file like model.safetensors or pytorch_model.bin',
+      };
+    }
+
+    if (!hasProcessorArtifacts) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Transformers STT model is missing tokenizer or processor files required for inference',
+      };
+    }
+
+    if (
+      modelFileName &&
+      !transformerWeightFiles.some((entry) => entry.toLowerCase() === modelFileName)
+    ) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Selected file is not a supported Transformers weight file for this STT model',
+      };
+    }
+
+    return {
+      valid: true,
+      resolvedModelPath: modelDirectory,
+    };
+  }
+
   private async validateLocalModelPath(
+    provider: STTProvider,
     inputPath: string
   ): Promise<LocalSttValidationResult> {
     const trimmedPath = inputPath.trim();
@@ -93,51 +240,40 @@ class STTService {
       };
     }
 
-    const stats = await fs.stat(trimmedPath);
-    const modelDirectory = stats.isDirectory()
-      ? trimmedPath
-      : path.dirname(trimmedPath);
-    const modelFilePath = stats.isDirectory()
-      ? path.join(trimmedPath, 'model.bin')
-      : trimmedPath;
-    const modelFileName = path.basename(modelFilePath).toLowerCase();
-
-    if (modelFileName !== 'model.bin') {
-      return {
-        valid: false,
-        resolvedModelPath: trimmedPath,
-        reason:
-          'This STT backend only supports Faster-Whisper/CTranslate2 bundles with a model.bin file',
-      };
+    if (provider === 'faster-whisper') {
+      return this.validateLocalFasterWhisperModelPath(trimmedPath);
     }
 
-    const [hasModelFile, hasConfig, hasTokenizer, hasPreprocessorConfig] =
-      await Promise.all([
-        fileExists(modelFilePath),
-        fileExists(path.join(modelDirectory, 'config.json')),
-        fileExists(path.join(modelDirectory, 'tokenizer.json')),
-        fileExists(path.join(modelDirectory, 'preprocessor_config.json')),
-      ]);
-
-    if (!hasModelFile || !hasConfig || !hasTokenizer || !hasPreprocessorConfig) {
-      return {
-        valid: false,
-        resolvedModelPath: trimmedPath,
-        reason:
-          'Incomplete Faster-Whisper bundle. Expected model.bin, config.json, tokenizer.json, and preprocessor_config.json in the same folder',
-      };
+    if (provider === 'transformers') {
+      return this.validateLocalTransformersModelPath(trimmedPath);
     }
 
     return {
-      valid: true,
-      resolvedModelPath: modelDirectory,
+      valid: false,
+      resolvedModelPath: trimmedPath,
+      reason: `Unsupported STT provider: ${provider}`,
     };
   }
 
   private async resolveModelSource(
-    model: Pick<STTModelConfig, 'modelSource' | 'modelPath'>
+    model: Pick<STTModelConfig, 'provider' | 'modelSource' | 'modelPath'>
   ) {
+    if (!this.supportedProviders.has(model.provider)) {
+      return {
+        valid: false,
+        resolvedModelPath: model.modelPath,
+        reason: `Unsupported STT provider: ${model.provider}`,
+      };
+    }
+
     if (model.modelSource === 'huggingface') {
+      if (model.provider === 'transformers') {
+        return {
+          valid: true,
+          resolvedModelPath: model.modelPath,
+        };
+      }
+
       const valid =
         this.bundledModelIds.has(model.modelPath) ||
         model.modelPath.startsWith('Systran/faster-whisper-');
@@ -151,7 +287,7 @@ class STTService {
       };
     }
 
-    return this.validateLocalModelPath(model.modelPath);
+    return this.validateLocalModelPath(model.provider, model.modelPath);
   }
 
   async checkModels() {
@@ -195,6 +331,7 @@ class STTService {
     const model: STTModelConfig = {
       id: modelId,
       name: input.name,
+      provider: input.provider,
 
       modelSource: input.modelSource ?? 'huggingface',
       modelPath: input.modelPath,
@@ -230,6 +367,7 @@ class STTService {
   async addLocalModelFromTemp(input: {
     id: string;
     name: string;
+    provider: STTModelConfig['provider'];
     modelTempPath: string;
     device?: STTModelConfig['device'];
     computeType?: STTModelConfig['computeType'];
@@ -249,6 +387,7 @@ class STTService {
     return this.addModel({
       id: modelId,
       name: input.name,
+      provider: input.provider,
       modelSource: 'local',
       modelPath: targetDir,
       device: input.device,
@@ -312,6 +451,7 @@ class STTService {
       ...currentModel,
 
       name: input.name ?? currentModel.name,
+      provider: input.provider ?? currentModel.provider,
       modelPath: input.modelPath ?? currentModel.modelPath,
       device: input.device ?? currentModel.device,
       computeType: input.computeType ?? currentModel.computeType,
@@ -397,6 +537,7 @@ class STTService {
       path.basename(input.audioPath)
     );
     formData.append('modelId', activeModel.id);
+    formData.append('provider', activeModel.provider);
     formData.append('modelPath', activeModel.modelPath);
     formData.append('device', activeModel.device);
     formData.append('computeType', activeModel.computeType);
@@ -408,15 +549,33 @@ class STTService {
 
     const response = await fetch(`${STT_SERVER_URL}/transcribe`, {
       method: 'POST',
+      headers: input.requestId
+        ? {
+            'x-request-id': input.requestId,
+          }
+        : undefined,
       body: formData,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+      let payload: RemoteServiceErrorPayload | null = null;
 
-      throw new Error(
-        `STT server failed with ${response.status}: ${errorText}`
-      );
+      try {
+        payload = JSON.parse(errorText) as RemoteServiceErrorPayload;
+      } catch {
+        payload = null;
+      }
+
+      const source = payload?.source ? `${payload.source}: ` : '';
+
+      throw new AppError({
+        message:
+          payload?.error
+            ? `${source}${payload.error}`
+            : `STT server failed with ${response.status}`,
+        details: payload?.details ?? errorText,
+      });
     }
 
     const data = (await response.json()) as {

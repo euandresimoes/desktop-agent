@@ -1,5 +1,6 @@
 export type VoiceTurnInput = {
   audioPath: string;
+  requestId?: string;
 };
 
 export type VoiceTurnOutput = {

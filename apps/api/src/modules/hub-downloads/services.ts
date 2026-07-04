@@ -10,6 +10,7 @@ import type {
   HubModelSearchResponse,
   HubModelSearchResult,
 } from './types.ts';
+import type { STTProvider } from '../stt/types.ts';
 
 const HUB_API_BASE = 'https://huggingface.co/api';
 const HUB_BASE = 'https://huggingface.co';
@@ -39,12 +40,25 @@ class HubDownloadsService {
     'config.json',
     'tokenizer.json',
     'preprocessor_config.json',
+    'vocabulary.json',
+  ] as const;
+
+  private readonly transformersProcessorFiles = [
+    'preprocessor_config.json',
+    'processor_config.json',
+    'tokenizer.json',
+    'tokenizer_config.json',
+    'vocab.json',
+    'merges.txt',
+    'special_tokens_map.json',
   ] as const;
 
   async searchModels(input: {
     query: string;
     pipelineTag?: string;
     cursor?: string;
+    sort?: string;
+    direction?: '1' | '-1';
   }): Promise<HubModelSearchResponse> {
     const trimmedQuery = input.query.trim();
 
@@ -66,6 +80,14 @@ class HubDownloadsService {
 
     if (input.cursor) {
       url.searchParams.set('cursor', input.cursor);
+    }
+
+    if (input.sort?.trim()) {
+      url.searchParams.set('sort', input.sort);
+    }
+
+    if (input.direction === '1' || input.direction === '-1') {
+      url.searchParams.set('direction', input.direction);
     }
 
     const response = await fetch(url);
@@ -126,9 +148,12 @@ class HubDownloadsService {
     repeatPenalty?: number;
   }) {
     const jobId = randomUUID();
-    const displayName =
-      input.displayName?.trim() ||
-      this.deriveDisplayNameFromFileName(input.fileName, input.type);
+    const displayName = this.resolveDisplayName({
+      repoId: input.repoId,
+      fileName: input.fileName,
+      type: input.type,
+      requestedDisplayName: input.displayName,
+    });
 
     const job: DownloadJobRecord = {
       id: jobId,
@@ -250,6 +275,23 @@ class HubDownloadsService {
     return baseName.replace(/[-_]+/g, ' ').trim() || fileName;
   }
 
+  private isGenericModelDisplayName(value: string) {
+    const normalizedValue = value
+      .trim()
+      .toLowerCase()
+      .replace(/\.[a-z0-9]+$/i, '');
+
+    return new Set([
+      '',
+      'model',
+      'pytorch_model',
+      'tf_model',
+      'flax_model',
+      'voice',
+      'audio_model',
+    ]).has(normalizedValue);
+  }
+
   private deriveManagedId(
     repoId: string,
     fileName: string,
@@ -267,6 +309,29 @@ class HubDownloadsService {
       .replace(/[^a-z0-9._-]+/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '');
+  }
+
+  private resolveDisplayName(input: {
+    repoId: string;
+    fileName: string;
+    type: 'llm' | 'stt' | 'tts';
+    requestedDisplayName?: string;
+  }) {
+    const managedId = this.deriveManagedId(
+      input.repoId,
+      input.fileName,
+      input.type
+    );
+    const requestedDisplayName = input.requestedDisplayName?.trim() ?? '';
+
+    if (
+      requestedDisplayName &&
+      !this.isGenericModelDisplayName(requestedDisplayName)
+    ) {
+      return requestedDisplayName;
+    }
+
+    return managedId;
   }
 
   private async fetchRepositoryFiles(repoId: string) {
@@ -323,6 +388,52 @@ class HubDownloadsService {
     }
 
     return requiredFiles;
+  }
+
+  private detectSttProvider(fileName: string, repoFiles: string[]): STTProvider | null {
+    if (this.getCompatibleSttBundle(fileName, repoFiles)) {
+      return 'faster-whisper';
+    }
+
+    if (this.getCompatibleTransformersBundle(fileName, repoFiles)) {
+      return 'transformers';
+    }
+
+    return null;
+  }
+
+  private getCompatibleTransformersBundle(fileName: string, repoFiles: string[]) {
+    const normalizedFileName = fileName.replace(/\\/g, '/');
+    const baseName = path.posix.basename(normalizedFileName).toLowerCase();
+    const supportedWeightFile =
+      baseName.endsWith('.safetensors') ||
+      baseName === 'pytorch_model.bin' ||
+      baseName === 'model.bin';
+
+    if (!supportedWeightFile) {
+      return null;
+    }
+
+    const fileDirectory = path.posix.dirname(normalizedFileName);
+    const directoryPrefix = fileDirectory === '.' ? '' : `${fileDirectory}/`;
+    const normalizedFiles = new Set(
+      repoFiles.map((repoFile) => repoFile.replace(/\\/g, '/'))
+    );
+    const configFile = `${directoryPrefix}config.json`;
+
+    if (!normalizedFiles.has(configFile)) {
+      return null;
+    }
+
+    const processorFiles = this.transformersProcessorFiles
+      .map((file) => `${directoryPrefix}${file}`)
+      .filter((file) => normalizedFiles.has(file));
+
+    if (processorFiles.length === 0) {
+      return null;
+    }
+
+    return [normalizedFileName, configFile, ...processorFiles];
   }
 
   private async downloadFileToPath(input: {
@@ -523,12 +634,18 @@ class HubDownloadsService {
     }
 
     const repoFiles = await this.fetchRepositoryFiles(input.repoId);
-    const bundleFiles = this.getCompatibleSttBundle(input.fileName, repoFiles);
+    const fasterWhisperBundle = this.getCompatibleSttBundle(input.fileName, repoFiles);
+    const transformersBundle = this.getCompatibleTransformersBundle(
+      input.fileName,
+      repoFiles
+    );
+    const bundleFiles = fasterWhisperBundle ?? transformersBundle;
+    const provider = this.detectSttProvider(input.fileName, repoFiles);
 
-    if (!bundleFiles) {
+    if (!bundleFiles || !provider) {
       job.status = 'failed';
       job.error =
-        'Selected STT file is not a Faster-Whisper/CTranslate2 bundle';
+        'Selected STT file is not compatible with Faster-Whisper or Transformers';
       job.finishedAt = new Date().toISOString();
       job.abortController = null;
       return;
@@ -596,6 +713,7 @@ class HubDownloadsService {
       const registeredModel = await sttService.addLocalModelFromTemp({
         id: modelId,
         name: input.displayName,
+        provider,
         modelTempPath: localBundleRoot,
       });
 

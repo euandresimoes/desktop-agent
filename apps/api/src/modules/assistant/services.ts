@@ -17,7 +17,7 @@ function toBuffer(value: Buffer | Uint8Array | ArrayBuffer) {
 }
 
 class AssistantService {
-  async speak(input: { message: string }) {
+  async speak(input: { message: string; requestId?: string }) {
     const activeVoice = await appSetupService.getActiveVoice();
 
     if (!activeVoice) {
@@ -47,6 +47,7 @@ class AssistantService {
 
     const audio = await piperTTSService.speak({
       text,
+      requestId: input.requestId,
       voiceId: activeVoice.id,
       modelPath: activeVoice.modelPath,
       configPath: activeVoice.configPath,
@@ -73,6 +74,7 @@ class AssistantService {
 
     const transcription = await sttService.transcribe({
       audioPath: input.audioPath,
+      requestId: input.requestId,
     });
 
     const sttDurationMs = Date.now() - sttStartedAt;
@@ -110,6 +112,7 @@ class AssistantService {
 
     const audio = await piperTTSService.speak({
       text: responseText,
+      requestId: input.requestId,
       voiceId: activeVoice.id,
       modelPath: activeVoice.modelPath,
       configPath: activeVoice.configPath,

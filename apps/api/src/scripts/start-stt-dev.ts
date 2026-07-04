@@ -5,6 +5,7 @@ import path from 'node:path';
 type STTModelConfig = {
   id: string;
   name: string;
+  provider: 'faster-whisper' | 'transformers';
 
   modelSource: 'huggingface' | 'local';
   modelPath: string;
@@ -71,6 +72,7 @@ async function main() {
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
 
+        STT_PROVIDER: activeModel.provider,
         STT_MODEL_PATH: activeModel.modelPath,
         STT_DEVICE: activeModel.device,
         STT_COMPUTE_TYPE: activeModel.computeType,

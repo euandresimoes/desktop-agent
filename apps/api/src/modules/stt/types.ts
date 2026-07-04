@@ -1,4 +1,5 @@
 export type STTModelSource = 'huggingface' | 'local';
+export type STTProvider = 'faster-whisper' | 'transformers';
 
 export type STTDevice = 'cpu' | 'cuda' | 'auto';
 
@@ -11,6 +12,7 @@ export type STTComputeType =
 export type STTModelConfig = {
   id: string;
   name: string;
+  provider: STTProvider;
 
   modelSource: STTModelSource;
   modelPath: string;
@@ -26,6 +28,7 @@ export type STTModelConfig = {
 export type AddSTTModelInput = {
   id: string;
   name: string;
+  provider: STTProvider;
 
   modelSource?: STTModelSource;
   modelPath: string;
@@ -42,6 +45,7 @@ export type UpdateSTTModelInput = {
   modelId: string;
 
   name?: string;
+  provider?: STTProvider;
   modelPath?: string;
   device?: STTDevice;
   computeType?: STTComputeType;
@@ -52,6 +56,7 @@ export type UpdateSTTModelInput = {
 
 export type TranscribeInput = {
   audioPath: string;
+  requestId?: string;
 };
 
 export type TranscribeOutput = {

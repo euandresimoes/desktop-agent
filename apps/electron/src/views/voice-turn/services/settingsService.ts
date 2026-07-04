@@ -1,9 +1,11 @@
 import { useToast } from "../../../shared/utils/toast";
 import { computed, ref } from "vue";
+import { fetchJsonOrThrow } from "../../../shared/utils/http";
 import {
   useHubDownloadsService,
   type HubInstallJob,
   type HubModelSearchResult,
+  type HubSearchSortOption,
   type HubModelType,
 } from "../../../shared/services/hubDownloadsService";
 
@@ -25,6 +27,7 @@ export interface LlmModel {
 export interface SttModel {
   id: string;
   name: string;
+  provider: "faster-whisper" | "transformers";
   modelSource: "huggingface" | "local";
   modelPath: string;
   device: "cpu" | "cuda" | "auto";
@@ -60,6 +63,7 @@ export interface NewLlmForm {
 export interface NewSttForm {
   id: string;
   name: string;
+  provider: "faster-whisper" | "transformers";
   modelSource: "huggingface" | "local";
   modelPath: string;
   device: "cpu" | "cuda" | "auto";
@@ -120,6 +124,7 @@ const createDefaultLlmForm = (): NewLlmForm => ({
 const createDefaultSttForm = (): NewSttForm => ({
   id: "",
   name: "",
+  provider: "faster-whisper",
   modelSource: "huggingface",
   modelPath: "",
   device: "cpu",
@@ -145,7 +150,24 @@ const newStt = ref<NewSttForm>(createDefaultSttForm());
 const newVoice = ref<NewVoiceForm>(createDefaultVoiceForm());
 const hubSearchQuery = ref("");
 const hubPipelineTag = ref("all");
+const hubSort = ref<HubSearchSortOption>("featured");
 const hubModelType = ref<HubModelType>("llm");
+
+const detectLocalSttProvider = (modelPath: string): "faster-whisper" | "transformers" => {
+  const normalizedPath = modelPath.replace(/\\/g, "/").toLowerCase();
+
+  if (
+    normalizedPath.endsWith("/model.bin") ||
+    normalizedPath.endsWith(".safetensors") ||
+    normalizedPath.endsWith("/pytorch_model.bin")
+  ) {
+    return normalizedPath.endsWith("/model.bin")
+      ? "faster-whisper"
+      : "transformers";
+  }
+
+  return "faster-whisper";
+};
 
 export function useSettingsService(onUpdated?: () => void) {
   const toast = useToast();
@@ -154,15 +176,15 @@ export function useSettingsService(onUpdated?: () => void) {
   const fetchAll = async () => {
     isLoading.value = true;
     try {
-      const llmData = await fetch(`${API_BASE}/models`).then((r) => r.json());
+      const llmData = await fetchJsonOrThrow<any>(`${API_BASE}/models`, undefined, "Failed to load LLM models");
       llmModels.value = llmData.models || [];
       activeLlmId.value = llmData.activeModelId;
 
-      const sttData = await fetch(`${API_BASE}/stt/models`).then((r) => r.json());
+      const sttData = await fetchJsonOrThrow<any>(`${API_BASE}/stt/models`, undefined, "Failed to load STT models");
       sttModels.value = sttData.models || [];
       activeSttId.value = sttData.activeModelId;
 
-      const ttsData = await fetch(`${API_BASE}/setup/voices`).then((r) => r.json());
+      const ttsData = await fetchJsonOrThrow<any>(`${API_BASE}/setup/voices`, undefined, "Failed to load TTS voices");
       ttsVoices.value = ttsData.voices || [];
       activeVoiceId.value = ttsData.activeVoiceId;
     } catch (err) {
@@ -188,11 +210,15 @@ export function useSettingsService(onUpdated?: () => void) {
         body = { voiceId: id };
       }
 
-      await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      await fetchJsonOrThrow(
+        url,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        "Failed to set active model"
+      );
 
       await fetchAll();
       dispatchModelsUpdated();
@@ -200,6 +226,9 @@ export function useSettingsService(onUpdated?: () => void) {
       toast.success("Active model updated.");
     } catch (err) {
       console.error("Failed to set active model:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to set active model"
+      );
     }
   };
 
@@ -244,11 +273,15 @@ export function useSettingsService(onUpdated?: () => void) {
         };
       }
 
-      await fetch(url, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      await fetchJsonOrThrow(
+        url,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        "Failed to update model config"
+      );
 
       await fetchAll();
       dispatchModelsUpdated();
@@ -256,6 +289,9 @@ export function useSettingsService(onUpdated?: () => void) {
       toast.success("Settings saved successfully.");
     } catch (err) {
       console.error("Failed to update model config:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to update model config"
+      );
     }
   };
 
@@ -272,13 +308,20 @@ export function useSettingsService(onUpdated?: () => void) {
         url = `${API_BASE}/setup/voices/${id}`;
       }
 
-      await fetch(url, { method: "DELETE" });
+      await fetchJsonOrThrow(
+        url,
+        { method: "DELETE" },
+        "Failed to delete model"
+      );
       await fetchAll();
       dispatchModelsUpdated();
       onUpdated?.();
       toast.success("Model deleted.");
     } catch (err) {
       console.error("Failed to delete model:", err);
+      toast.error(
+        err instanceof Error ? err.message : "Failed to delete model"
+      );
     }
   };
 
@@ -326,6 +369,7 @@ export function useSettingsService(onUpdated?: () => void) {
         newVoice.value.configTempPath = path;
       } else if (type === "stt-model") {
         newStt.value.modelPath = path;
+        newStt.value.provider = detectLocalSttProvider(path);
         if (!newStt.value.id) {
           newStt.value.id = path.split(/[\\\/]/).pop()?.toLowerCase() || "";
         }
@@ -358,7 +402,10 @@ export function useSettingsService(onUpdated?: () => void) {
           return false;
         }
         url = `${API_BASE}/stt/models`;
-        body = { ...b };
+        body = {
+          ...b,
+          provider: b.provider || detectLocalSttProvider(b.modelPath),
+        };
       } else if (type === "tts") {
         const b = newVoice.value;
         if (!b.id || !b.name || !b.modelTempPath || !b.configTempPath) {
@@ -369,16 +416,15 @@ export function useSettingsService(onUpdated?: () => void) {
         body = { ...b };
       }
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to create model");
-      }
+      await fetchJsonOrThrow(
+        url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        "Failed to create model"
+      );
 
       // Reset forms
       if (type === "llm") {
@@ -418,6 +464,7 @@ export function useSettingsService(onUpdated?: () => void) {
     try {
       await hubDownloads.searchModels(hubSearchQuery.value, hubModelType.value, {
         pipelineTag: hubPipelineTag.value,
+        sort: hubSort.value,
       });
     } catch (error: any) {
       toast.error(error.message || "Failed to search Hugging Face.");
@@ -441,18 +488,10 @@ export function useSettingsService(onUpdated?: () => void) {
     }
 
     try {
-      const displayName = fileName
-        .replace(/\.gguf$/i, "")
-        .replace(/\.onnx$/i, "")
-        .replace(/\.bin$/i, "")
-        .replace(/\.pt$/i, "")
-        .replace(/\.safetensors$/i, "");
-
       await hubDownloads.startInstall({
         modelType: hubModelType.value,
         repoId: result.repoId,
         fileName,
-        displayName,
       });
     } catch (error: any) {
       toast.error(error.message || "Failed to start model download.");
@@ -489,6 +528,7 @@ export function useSettingsService(onUpdated?: () => void) {
     newVoice,
     hubSearchQuery,
     hubPipelineTag,
+    hubSort,
     hubModelType,
     isHubSearching: hubDownloads.isSearching,
     hubResults: hubDownloads.searchResults,

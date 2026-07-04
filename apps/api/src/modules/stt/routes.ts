@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { sttService } from './services.ts';
+import { sendErrorReply } from '../../shared/errors.ts';
 
 export async function sttRoutes(app: FastifyInstance) {
   app.get('/models', async () => {
@@ -27,6 +28,7 @@ export async function sttRoutes(app: FastifyInstance) {
     const body = request.body as {
       id?: string;
       name?: string;
+      provider?: 'faster-whisper' | 'transformers';
 
       modelSource?: 'huggingface' | 'local';
       modelPath?: string;
@@ -39,9 +41,9 @@ export async function sttRoutes(app: FastifyInstance) {
       vadFilter?: boolean;
     };
 
-    if (!body.id || !body.name || !body.modelPath) {
+    if (!body.id || !body.name || !body.modelPath || !body.provider) {
       return reply.status(400).send({
-        error: 'id, name and modelPath are required',
+        error: 'id, name, provider and modelPath are required',
       });
     }
 
@@ -49,6 +51,7 @@ export async function sttRoutes(app: FastifyInstance) {
       const model = await sttService.addModel({
         id: body.id,
         name: body.name,
+        provider: body.provider,
         modelSource: body.modelSource,
         modelPath: body.modelPath,
         device: body.device,
@@ -60,11 +63,10 @@ export async function sttRoutes(app: FastifyInstance) {
 
       return reply.status(201).send(model);
     } catch (error) {
-      return reply.status(400).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to add STT model',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to add STT model',
+        statusCode: 400,
+        context: 'stt:add-model',
       });
     }
   });
@@ -83,11 +85,10 @@ export async function sttRoutes(app: FastifyInstance) {
     try {
       return await sttService.setActiveModel(body.modelId);
     } catch (error) {
-      return reply.status(404).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'STT model not found',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'STT model not found',
+        statusCode: 404,
+        context: 'stt:set-active',
       });
     }
   });
@@ -99,6 +100,7 @@ export async function sttRoutes(app: FastifyInstance) {
 
     const body = request.body as {
       name?: string;
+      provider?: 'faster-whisper' | 'transformers';
       modelPath?: string;
       device?: 'cpu' | 'cuda' | 'auto';
       computeType?: 'int8' | 'int8_float16' | 'float16' | 'float32';
@@ -111,6 +113,7 @@ export async function sttRoutes(app: FastifyInstance) {
       return await sttService.updateModel({
         modelId: params.modelId,
         name: body.name,
+        provider: body.provider,
         modelPath: body.modelPath,
         device: body.device,
         computeType: body.computeType,
@@ -119,11 +122,10 @@ export async function sttRoutes(app: FastifyInstance) {
         vadFilter: body.vadFilter,
       });
     } catch (error) {
-      return reply.status(400).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to update STT model',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to update STT model',
+        statusCode: 400,
+        context: 'stt:update-model',
       });
     }
   });
@@ -136,11 +138,10 @@ export async function sttRoutes(app: FastifyInstance) {
     try {
       return await sttService.removeModel(params.modelId);
     } catch (error) {
-      return reply.status(404).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'STT model not found',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'STT model not found',
+        statusCode: 404,
+        context: 'stt:remove-model',
       });
     }
   });
@@ -178,11 +179,9 @@ export async function sttRoutes(app: FastifyInstance) {
         sttServerDurationMs: result.serverDurationMs,
       };
     } catch (error) {
-      return reply.status(500).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to transcribe audio',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to transcribe audio',
+        context: 'stt:transcribe',
       });
     } finally {
       await fs.rm(audioPath, {

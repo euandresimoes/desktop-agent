@@ -1,4 +1,5 @@
 import type { SpeakInput } from './types.ts';
+import { AppError } from '../../shared/errors.ts';
 
 const TTS_SERVER_URL = process.env.TTS_SERVER_URL ?? 'http://127.0.0.1:35422';
 
@@ -14,6 +15,11 @@ class PiperTTSService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(input.requestId
+          ? {
+              'x-request-id': input.requestId,
+            }
+          : {}),
       },
       body: JSON.stringify({
         text: input.text,
@@ -28,10 +34,35 @@ class PiperTTSService {
 
     if (!response.ok) {
       const errorText = await response.text();
+      let payload:
+        | {
+            error?: string;
+            details?: string | null;
+            requestId?: string | null;
+            source?: string;
+          }
+        | null = null;
 
-      throw new Error(
-        `TTS server failed with ${response.status}: ${errorText}`
-      );
+      try {
+        payload = JSON.parse(errorText) as {
+          error?: string;
+          details?: string | null;
+          requestId?: string | null;
+          source?: string;
+        };
+      } catch {
+        payload = null;
+      }
+
+      const source = payload?.source ? `${payload.source}: ` : '';
+
+      throw new AppError({
+        message:
+          payload?.error
+            ? `${source}${payload.error}`
+            : `TTS server failed with ${response.status}`,
+        details: payload?.details ?? errorText,
+      });
     }
 
     const arrayBuffer = await response.arrayBuffer();

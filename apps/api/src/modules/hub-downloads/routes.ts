@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { hubDownloadsService } from './services.ts';
+import { sendErrorReply } from '../../shared/errors.ts';
 
 export async function hubDownloadsRoutes(app: FastifyInstance) {
   app.get('/install', async () => {
@@ -11,6 +12,8 @@ export async function hubDownloadsRoutes(app: FastifyInstance) {
       q?: string;
       cursor?: string;
       pipelineTag?: string;
+      sort?: string;
+      direction?: '1' | '-1';
     };
 
     if (!query.q?.trim()) {
@@ -25,13 +28,13 @@ export async function hubDownloadsRoutes(app: FastifyInstance) {
         query: query.q,
         cursor: query.cursor,
         pipelineTag: query.pipelineTag,
+        sort: query.sort,
+        direction: query.direction,
       });
     } catch (error) {
-      return reply.status(500).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to search Hugging Face models',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to search Hugging Face models',
+        context: 'hub:search-models',
       });
     }
   });
@@ -102,9 +105,10 @@ export async function hubDownloadsRoutes(app: FastifyInstance) {
     try {
       return hubDownloadsService.cancelJob(params.jobId);
     } catch (error) {
-      return reply.status(404).send({
-        error:
-          error instanceof Error ? error.message : 'Download job not found',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Download job not found',
+        statusCode: 404,
+        context: 'hub:cancel-job',
       });
     }
   });

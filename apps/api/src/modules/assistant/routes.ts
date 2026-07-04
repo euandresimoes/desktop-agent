@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance } from 'fastify';
 import { assistantService } from './services.ts';
+import { sendErrorReply } from '../../shared/errors.ts';
 
 export async function assistantRoutes(app: FastifyInstance) {
   app.post('/speak', async (request, reply) => {
@@ -23,6 +24,7 @@ export async function assistantRoutes(app: FastifyInstance) {
     try {
       const audio = await assistantService.speak({
         message,
+        requestId: request.id,
       });
 
       return reply
@@ -30,11 +32,9 @@ export async function assistantRoutes(app: FastifyInstance) {
         .header('content-type', 'audio/wav')
         .send(audio);
     } catch (error) {
-      return reply.status(500).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to synthesize assistant speech',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to synthesize assistant speech',
+        context: 'assistant:speak',
       });
     }
   });
@@ -70,6 +70,7 @@ export async function assistantRoutes(app: FastifyInstance) {
 
       const result = await assistantService.voiceTurn({
         audioPath,
+        requestId: request.id,
       });
 
       const audioBase64 = result.audio.toString('base64');
@@ -105,11 +106,9 @@ export async function assistantRoutes(app: FastifyInstance) {
         ttsDurationMs: result.ttsDurationMs,
       });
     } catch (error) {
-      return reply.status(500).send({
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to process assistant voice turn',
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to process assistant voice turn',
+        context: 'assistant:voice-turn',
       });
     } finally {
       if (fileHandle) {

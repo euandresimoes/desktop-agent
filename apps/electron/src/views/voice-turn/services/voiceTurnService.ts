@@ -2,6 +2,7 @@ import { AudioPlayerVisualizer, AudioRecorder } from "../../../shared/utils/audi
 import { useToast } from "../../../shared/utils/toast";
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useAppSettingsService } from "../../../shared/services/appSettingsService";
+import { AppHttpError, fetchJsonOrThrow } from "../../../shared/utils/http";
 
 export type VoiceTurnState = "loading" | "not_ready" | "ready" | "recording" | "thinking" | "speaking";
 
@@ -39,9 +40,7 @@ const API_BASE = "http://localhost:35421/api/v1";
 
 async function fetchJson<T>(url: string): Promise<T | null> {
   try {
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    return (await r.json()) as T;
+    return await fetchJsonOrThrow<T>(url, undefined, "Failed to fetch JSON");
   } catch {
     return null;
   }
@@ -162,9 +161,11 @@ export function useVoiceTurnService() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/setup/status`);
-      if (!res.ok) throw new Error("Erro ao consultar status");
-      const data = await res.json();
+      const data = await fetchJsonOrThrow<any>(
+        `${API_BASE}/setup/status`,
+        undefined,
+        "Erro ao consultar status"
+      );
 
       await loadSettings();
       void syncAssistantSettingsToBackend(settings.value);
@@ -289,7 +290,38 @@ export function useVoiceTurnService() {
         signal: activeRequestController.signal,
       });
 
-      if (!res.ok) throw new Error("Voice turn request failed");
+      if (!res.ok) {
+        const text = await res.text();
+        let payload: {
+          error?: string;
+          details?: string | null;
+          requestId?: string | null;
+          source?: string;
+        } | null = null;
+
+        try {
+          payload = JSON.parse(text) as {
+            error?: string;
+            details?: string | null;
+            requestId?: string | null;
+            source?: string;
+          };
+        } catch {
+          payload = null;
+        }
+
+        throw new AppHttpError({
+          message:
+            payload?.error
+              ? `${payload.source ? `${payload.source}: ` : ""}${payload.error}${payload.requestId ? ` (request ${payload.requestId})` : ""}`
+              : "Voice turn request failed",
+          status: res.status,
+          requestId: payload?.requestId,
+          source: payload?.source ?? "api",
+          details: payload?.details ?? text,
+          payload,
+        });
+      }
 
       const data = await res.json();
       console.log("[voice-turn] response payload", {
@@ -377,6 +409,15 @@ export function useVoiceTurnService() {
       }
 
       console.error("Error processing voice turn:", err);
+      if (err instanceof AppHttpError) {
+        console.error("[voice-turn] backend error details", {
+          status: err.status,
+          source: err.source,
+          requestId: err.requestId,
+          details: err.details,
+          payload: err.payload,
+        });
+      }
       currentState.value = "ready";
       dispatchSystemStatus(
         activeConfig.value,

@@ -5,11 +5,19 @@ import BaseButton from "../Base/BaseButton.vue";
 import BaseInput from "../Base/BaseInput.vue";
 import BaseModal from "../Base/BaseModal.vue";
 import BaseSelect from "../Base/BaseSelect.vue";
-import type { HubFileOption, HubInstallJob, HubModelSearchResult, HubModelType } from "../../services/hubDownloadsService";
+import type {
+  HubFileOption,
+  HubInstallJob,
+  HubModelSearchResult,
+  HubSearchSortOption,
+  HubModelType,
+  HubSttCompatibility,
+} from "../../services/hubDownloadsService";
 
 type DownloaderLocalForm = {
   id: string;
   name: string;
+  provider?: "faster-whisper" | "transformers";
   modelTempPath?: string;
   modelPath?: string;
   configTempPath?: string;
@@ -45,6 +53,7 @@ const props = withDefaults(defineProps<{
   searchPlaceholder?: string;
   searchQuery: string;
   activeFilter: string;
+  activeSort: HubSearchSortOption;
   filters: Array<{ value: string; label: string }>;
   isSearching: boolean;
   results: HubModelSearchResult[];
@@ -64,6 +73,7 @@ const emit = defineEmits<{
   (e: "update:modelType", value: HubModelType): void;
   (e: "update:searchQuery", value: string): void;
   (e: "update:activeFilter", value: string): void;
+  (e: "update:activeSort", value: HubSearchSortOption): void;
   (e: "update:selectedFile", payload: { repoId: string; fileName: string }): void;
   (e: "search"): void;
   (e: "loadMore"): void;
@@ -82,6 +92,19 @@ const modelTypeTabs = [
   { value: "llm" as const, label: "LLM", icon: FileCode2 },
   { value: "stt" as const, label: "STT", icon: Waves },
   { value: "tts" as const, label: "TTS", icon: Volume2 },
+];
+
+const sortOptions = [
+  { value: "featured", label: "Featured" },
+  { value: "downloads", label: "Most downloads" },
+  { value: "likes", label: "Most likes" },
+  { value: "updated", label: "Recently updated" },
+  { value: "newest", label: "Newest" },
+] satisfies Array<{ value: HubSearchSortOption; label: string }>;
+
+const sttProviderOptions = [
+  { value: "faster-whisper", label: "Faster-Whisper" },
+  { value: "transformers", label: "Transformers" },
 ];
 
 const selectedResult = computed(
@@ -194,11 +217,89 @@ const getSttBundleFiles = (fileName: string, files: HubFileOption[]) => {
     `${prefix}config.json`,
     `${prefix}tokenizer.json`,
     `${prefix}preprocessor_config.json`,
+    `${prefix}vocabulary.json`,
   ];
 
   return requiredFiles.every((requiredFile) => fileSet.has(requiredFile))
     ? requiredFiles
     : null;
+};
+
+const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCompatibility => {
+  const fasterWhisperBundle = getSttBundleFiles(fileName, files);
+
+  if (fasterWhisperBundle) {
+    return {
+      compatible: true,
+      provider: "faster-whisper",
+      requiredFiles: fasterWhisperBundle,
+      statusLabel: "Compatible",
+      typeLabel: "CTranslate2",
+    };
+  }
+
+  const normalizedFileName = fileName.replace(/\\/g, "/");
+  const lowerFileName = normalizedFileName.toLowerCase();
+  const fileNameParts = normalizedFileName.split("/");
+  const baseName = fileNameParts[fileNameParts.length - 1]?.toLowerCase() ?? "";
+  const supportedWeightFile =
+    lowerFileName.endsWith(".safetensors") ||
+    baseName === "pytorch_model.bin" ||
+    baseName === "model.bin";
+
+  if (supportedWeightFile) {
+    const directory = normalizedFileName.includes("/")
+      ? normalizedFileName.slice(0, normalizedFileName.lastIndexOf("/"))
+      : "";
+    const prefix = directory ? `${directory}/` : "";
+    const fileSet = new Set(files.map((item) => item.fileName.replace(/\\/g, "/")));
+    const configFile = `${prefix}config.json`;
+    const processorFiles = [
+      `${prefix}preprocessor_config.json`,
+      `${prefix}processor_config.json`,
+      `${prefix}tokenizer.json`,
+      `${prefix}tokenizer_config.json`,
+      `${prefix}vocab.json`,
+      `${prefix}merges.txt`,
+      `${prefix}special_tokens_map.json`,
+    ].filter((candidate) => fileSet.has(candidate));
+
+    if (fileSet.has(configFile) && processorFiles.length > 0) {
+      return {
+        compatible: true,
+        provider: "transformers",
+        requiredFiles: [normalizedFileName, configFile, ...processorFiles],
+        statusLabel: "Compatible",
+        typeLabel: "Transformers",
+      };
+    }
+
+    return {
+      compatible: false,
+      provider: null,
+      requiredFiles: null,
+      statusLabel: "Missing files",
+      typeLabel: "Transformers",
+    };
+  }
+
+  if (lowerFileName.endsWith("/model.bin") || lowerFileName === "model.bin") {
+    return {
+      compatible: false,
+      provider: null,
+      requiredFiles: null,
+      statusLabel: "Missing files",
+      typeLabel: "CTranslate2",
+    };
+  }
+
+  return {
+    compatible: false,
+    provider: null,
+    requiredFiles: null,
+    statusLabel: "Incompatible",
+    typeLabel: "Other",
+  };
 };
 
 const getCompatibility = (file: HubFileOption, files: HubFileOption[]): FileCompatibility => {
@@ -211,31 +312,16 @@ const getCompatibility = (file: HubFileOption, files: HubFileOption[]): FileComp
   }
 
   if (props.modelType === "stt") {
-    const compatibleBundle = getSttBundleFiles(file.fileName, files);
-
-    if (compatibleBundle) {
-      return {
-        typeLabel: "CTranslate2",
-        statusLabel: "Compatible",
-        statusTone: "compatible",
-        isCompatible: true,
-      };
-    }
-
-    if (lower.endsWith("model.bin")) {
-      return {
-        typeLabel: "CTranslate2",
-        statusLabel: "Missing files",
-        statusTone: "warning",
-        isCompatible: false,
-      };
-    }
-
+    const compatibility = getSttCompatibility(file.fileName, files);
     return {
-      typeLabel: "Other",
-      statusLabel: "Incompatible",
-      statusTone: "incompatible",
-      isCompatible: false,
+      typeLabel: compatibility.typeLabel,
+      statusLabel: compatibility.statusLabel,
+      statusTone: compatibility.compatible
+        ? "compatible"
+        : compatibility.statusLabel === "Missing files"
+          ? "warning"
+          : "incompatible",
+      isCompatible: compatibility.compatible,
     };
   }
 
@@ -264,7 +350,7 @@ const repositoryStatus = (result: HubModelSearchResult) => {
   if (props.modelType === "stt") {
     return compatibleFiles.length > 0
       ? { label: "STT available", tone: "compatible" as const }
-      : { label: "No CTranslate2", tone: "warning" as const };
+      : { label: "No STT runtime", tone: "warning" as const };
   }
 
   const hasOnnxWithoutConfig = result.files.some((file) => {
@@ -341,7 +427,7 @@ const fileHelpText = computed(() => {
   }
 
   if (props.modelType === "stt") {
-    return "Download directly from the file list. Only Faster-Whisper/CTranslate2 bundles are marked as compatible.";
+    return "Download directly from the file list. Compatible Faster-Whisper and Transformers STT bundles are highlighted.";
   }
 
   return "Download directly from the file list. ONNX files with a matching config are marked as compatible.";
@@ -446,6 +532,13 @@ watch(
               :options="filters"
               class="filter-select"
               @update:model-value="emit('update:activeFilter', $event)"
+            />
+
+            <BaseSelect
+              :model-value="activeSort"
+              :options="sortOptions"
+              class="sort-select"
+              @update:model-value="emit('update:activeSort', $event as HubSearchSortOption)"
             />
 
             <BaseButton
@@ -641,6 +734,15 @@ watch(
               <BaseInput v-model="localForm.name" placeholder="e.g. Qwen 2.5 3B" />
             </div>
 
+            <div v-if="modelType === 'stt'" class="field">
+              <label>Provider</label>
+              <BaseSelect
+                :model-value="localForm.provider ?? 'faster-whisper'"
+                :options="sttProviderOptions"
+                @update:model-value="localForm.provider = String($event) as 'faster-whisper' | 'transformers'"
+              />
+            </div>
+
             <div class="field full-width">
               <label>{{ localPrimaryLabel }}</label>
               <div class="file-row">
@@ -760,12 +862,13 @@ watch(
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px auto;
+  grid-template-columns: minmax(0, 1fr) 180px 180px auto;
   gap: 8px;
   overflow: visible;
 }
 
-.filter-select {
+.filter-select,
+.sort-select {
   min-width: 0;
 }
 

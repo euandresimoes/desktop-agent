@@ -8,6 +8,7 @@ import fastifyMultipart from '@fastify/multipart';
 import { sttRoutes } from './modules/stt/routes.ts';
 import { hubDownloadsRoutes } from './modules/hub-downloads/routes.ts';
 import { assistantPreferencesRoutes } from './modules/assistant-preferences/routes.ts';
+import { buildErrorPayload } from './shared/errors.ts';
 
 export const app = Fastify({
   logger: true,
@@ -50,6 +51,32 @@ export const app = Fastify({
     //
     app.register(assistantRoutes, {
       prefix: '/api/v1/assistant',
+    });
+
+    app.setErrorHandler((error, request, reply) => {
+      request.log.error(
+        {
+          err: error,
+          requestId: request.id,
+          route: request.url,
+          method: request.method,
+          url: request.url,
+        },
+        'Unhandled API error'
+      );
+
+      const payload = buildErrorPayload(
+        error,
+        request.id,
+        'Unexpected API error',
+        'api'
+      );
+      const statusCode =
+        typeof (error as { statusCode?: unknown })?.statusCode === 'number'
+          ? Number((error as { statusCode?: number }).statusCode)
+          : 500;
+
+      reply.status(statusCode).send(payload);
     });
     //
     app.register(assistantPreferencesRoutes, {

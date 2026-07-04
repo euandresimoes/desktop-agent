@@ -9,42 +9,44 @@ import BaseToast from "./shared/components/Base/BaseToast.vue";
 import { useToast } from "./shared/utils/toast";
 import StatusBarComponent from "./shared/components/layout/StatusBarComponent.vue";
 import { useAppSettingsService } from "./shared/services/appSettingsService";
+import { AppHttpError } from "./shared/utils/http";
 
 const toast = useToast();
 const { loadSettings } = useAppSettingsService();
 
-// Intercept browser console errors and unhandled promise rejections
-// so they appear as toast notifications instead of being silent
-const originalConsoleError = console.error;
 const handleUnhandledRejection = (e: PromiseRejectionEvent) => {
-  const msg =
-    e.reason instanceof Error
-      ? e.reason.message
-      : String(e.reason ?? "Unhandled error");
+  if (e.reason instanceof AppHttpError) {
+    console.error("[frontend] unhandled backend error", {
+      message: e.reason.message,
+      status: e.reason.status,
+      source: e.reason.source,
+      requestId: e.reason.requestId,
+      details: e.reason.details,
+      payload: e.reason.payload,
+    });
+    toast.error(e.reason.message, 6000);
+    return;
+  }
+
+  const msg = e.reason instanceof Error
+    ? e.reason.message
+    : String(e.reason ?? "Unhandled error");
+  console.error("[frontend] unhandled rejection", e.reason);
   toast.error(msg, 6000);
 };
 const handleWindowError = (e: ErrorEvent) => {
+  console.error("[frontend] window error", e.error ?? e.message);
   toast.error(e.message ?? "An unexpected error occurred", 6000);
 };
 
 onMounted(() => {
   void loadSettings();
 
-  // Patch console.error to also show a toast
-  console.error = (...args: unknown[]) => {
-    originalConsoleError(...args);
-    const msg = args
-      .map((a) => (a instanceof Error ? a.message : String(a)))
-      .join(" ");
-    toast.error(msg, 6000);
-  };
-
   window.addEventListener("unhandledrejection", handleUnhandledRejection);
   window.addEventListener("error", handleWindowError);
 });
 
 onBeforeUnmount(() => {
-  console.error = originalConsoleError;
   window.removeEventListener("unhandledrejection", handleUnhandledRejection);
   window.removeEventListener("error", handleWindowError);
 });

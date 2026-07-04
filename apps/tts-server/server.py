@@ -5,9 +5,10 @@ import wave
 from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 from piper import PiperVoice, SynthesisConfig
+from errors import register_exception_handlers
 
 
 def clean_optional(value: Optional[str]) -> Optional[str]:
@@ -27,6 +28,7 @@ DEFAULT_CONFIG_PATH = os.environ["PIPER_CONFIG_PATH"]
 DEFAULT_VOICE_ID = clean_optional(os.environ.get("PIPER_VOICE_ID")) or DEFAULT_MODEL_PATH
 
 app = FastAPI()
+register_exception_handlers(app)
 
 
 @dataclass(frozen=True)
@@ -132,8 +134,8 @@ def speak(body: SpeakRequest):
 
     try:
         voice = get_voice(voice_key)
-    except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
+    except Exception:
+        raise
 
     syn_config = SynthesisConfig(
         length_scale=body.lengthScale,

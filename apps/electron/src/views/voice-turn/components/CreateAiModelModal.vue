@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AIModelDownloaderModal from "../../../shared/components/Downloader/AIModelDownloaderModal.vue";
-import type { HubInstallJob, HubModelSearchResult, HubModelType } from "../../../shared/services/hubDownloadsService";
+import type {
+  HubInstallJob,
+  HubModelSearchResult,
+  HubModelType,
+  HubSearchSortOption,
+} from "../../../shared/services/hubDownloadsService";
 import type { NewLlmForm, NewSttForm, NewVoiceForm } from "../services/settingsService";
 
 const props = defineProps<{
@@ -13,6 +18,7 @@ const props = defineProps<{
   ttsModel: NewVoiceForm;
   hubSearchQuery: string;
   hubPipelineTag: string;
+  hubSort: HubSearchSortOption;
   isHubSearching: boolean;
   hubResults: HubModelSearchResult[];
   selectedHubFiles: Record<string, string>;
@@ -32,6 +38,7 @@ const emit = defineEmits<{
   (e: "cancel-hub-install"): void;
   (e: "update:hubSearchQuery", value: string): void;
   (e: "update:hubPipelineTag", value: string): void;
+  (e: "update:hubSort", value: HubSearchSortOption): void;
   (e: "update:selectedHubFile", payload: { repoId: string; fileName: string }): void;
 }>();
 
@@ -73,6 +80,7 @@ const handleStartDownload = (payload: { repoId: string; fileName: string }) => {
     search-placeholder="Search repositories on Hugging Face..."
     :search-query="hubSearchQuery"
     :active-filter="hubPipelineTag"
+    :active-sort="hubSort"
     :filters="filters"
     :is-searching="isHubSearching"
     :results="hubResults"
@@ -85,6 +93,7 @@ const handleStartDownload = (payload: { repoId: string; fileName: string }) => {
     @update:model-type="emit('update:modelType', $event)"
     @update:search-query="emit('update:hubSearchQuery', $event)"
     @update:active-filter="emit('update:hubPipelineTag', $event)"
+    @update:active-sort="emit('update:hubSort', $event)"
     @update:selected-file="emit('update:selectedHubFile', $event)"
     @search="emit('search-hub')"
     @load-more="emit('load-more-hub')"

@@ -207,6 +207,10 @@ const openCurrentTtsFolder = async () => {
 
         <template v-if="currentStt">
           <BaseSettingsRow>
+            <template #copy><strong>Provider</strong><span>Runtime used to load and transcribe with this speech model.</span></template>
+            <template #control><div class="narrow readonly-value">{{ currentStt.provider }}</div></template>
+          </BaseSettingsRow>
+          <BaseSettingsRow>
             <template #copy><strong>Name</strong><span>Friendly name shown across the app.</span></template>
             <template #control><div class="narrow"><BaseInput v-model="currentStt.name" /></div></template>
           </BaseSettingsRow>
@@ -314,6 +318,14 @@ const openCurrentTtsFolder = async () => {
 .inline-actions { display: flex; gap: 8px; }
 .option-row { display: flex; align-items: center; justify-content: flex-end; gap: 18px; min-width: 180px; }
 .loading-state { padding: 12px 24px 28px; color: $color-text-muted; }
+.readonly-value {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  color: $color-text-secondary;
+  font-size: 13px;
+  text-transform: capitalize;
+}
 
 @media (max-width: 900px) {
   .narrow { width: 100%; }

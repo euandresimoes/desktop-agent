@@ -231,6 +231,7 @@ watch(
       :tts-model="settingsService.newVoice.value"
       :hub-search-query="settingsService.hubSearchQuery.value"
       :hub-pipeline-tag="settingsService.hubPipelineTag.value"
+      :hub-sort="settingsService.hubSort.value"
       :is-hub-searching="settingsService.isHubSearching.value"
       :hub-results="settingsService.hubResults.value"
       :selected-hub-files="settingsService.selectedHubFiles.value"
@@ -247,6 +248,7 @@ watch(
       @cancel-hub-install="settingsService.cancelHubInstall"
       @update:hub-search-query="settingsService.hubSearchQuery.value = $event"
       @update:hub-pipeline-tag="settingsService.hubPipelineTag.value = $event"
+      @update:hub-sort="settingsService.hubSort.value = $event"
       @update:selected-hub-file="settingsService.selectedHubFiles.value[$event.repoId] = $event.fileName"
     />
   </div>
