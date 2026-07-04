@@ -16,6 +16,30 @@ function toBuffer(value: Buffer | Uint8Array | ArrayBuffer) {
   return Buffer.from(value);
 }
 
+function buildTTSSpeakInput(
+  activeVoice: {
+    id: string;
+    modelPath: string;
+    configPath: string;
+    lengthScale?: number;
+    noiseScale?: number;
+    noiseW?: number;
+  },
+  text: string,
+  requestId?: string,
+) {
+  return {
+    text,
+    requestId,
+    voiceId: activeVoice.id,
+    modelPath: activeVoice.modelPath,
+    configPath: activeVoice.configPath,
+    lengthScale: activeVoice.lengthScale,
+    noiseScale: activeVoice.noiseScale,
+    noiseW: activeVoice.noiseW,
+  };
+}
+
 class AssistantService {
   async speak(input: { message: string; requestId?: string }) {
     const activeVoice = await appSetupService.getActiveVoice();
@@ -45,16 +69,9 @@ class AssistantService {
 
     const ttsStartedAt = Date.now();
 
-    const audio = await piperTTSService.speak({
-      text,
-      requestId: input.requestId,
-      voiceId: activeVoice.id,
-      modelPath: activeVoice.modelPath,
-      configPath: activeVoice.configPath,
-      lengthScale: activeVoice.lengthScale,
-      noiseScale: activeVoice.noiseScale,
-      noiseW: activeVoice.noiseW,
-    });
+    const audio = await piperTTSService.speak(
+      buildTTSSpeakInput(activeVoice, text, input.requestId),
+    );
 
     console.log('Assistant TTS took', Date.now() - ttsStartedAt, 'ms');
 
@@ -110,16 +127,9 @@ class AssistantService {
 
     const ttsStartedAt = Date.now();
 
-    const audio = await piperTTSService.speak({
-      text: responseText,
-      requestId: input.requestId,
-      voiceId: activeVoice.id,
-      modelPath: activeVoice.modelPath,
-      configPath: activeVoice.configPath,
-      lengthScale: activeVoice.lengthScale,
-      noiseScale: activeVoice.noiseScale,
-      noiseW: activeVoice.noiseW,
-    });
+    const audio = await piperTTSService.speak(
+      buildTTSSpeakInput(activeVoice, responseText, input.requestId),
+    );
 
     const ttsDurationMs = Date.now() - ttsStartedAt;
 

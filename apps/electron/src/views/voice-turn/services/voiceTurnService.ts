@@ -47,6 +47,14 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
+function resetStreamingSessionState(
+  liveCaption: { value: string },
+  activeTTSStreamSessionId: { value: string | null },
+) {
+  liveCaption.value = "";
+  activeTTSStreamSessionId.value = null;
+}
+
 export function useVoiceTurnService() {
   const toast = useToast();
   const { settings, loadSettings, syncAssistantSettingsToBackend } = useAppSettingsService();
@@ -154,6 +162,17 @@ export function useVoiceTurnService() {
       } catch (error) {
         console.warn("[voice-turn] failed to set output device", error);
       }
+    }
+  };
+
+  const stopPlaybackInfrastructure = () => {
+    if (playerVisualizer) {
+      playerVisualizer.stop();
+    }
+
+    if (ttsStreamPlayer) {
+      void ttsStreamPlayer.fadeOutAndStop();
+      ttsStreamPlayer = null;
     }
   };
 
@@ -393,6 +412,7 @@ export function useVoiceTurnService() {
         }
       } else {
         console.warn("[voice-turn] response without audio payload");
+        resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
         currentState.value = "ready";
         dispatchSystemStatus(
           activeConfig.value,
@@ -403,6 +423,7 @@ export function useVoiceTurnService() {
       }
     } catch (err: any) {
       if (err?.name === "AbortError") {
+        resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
         currentState.value = "ready";
         currentVolume.value = 0;
         dispatchSystemStatus(
@@ -424,6 +445,7 @@ export function useVoiceTurnService() {
           payload: err.payload,
         });
       }
+      resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
       currentState.value = "ready";
       dispatchSystemStatus(
         activeConfig.value,
@@ -452,19 +474,10 @@ export function useVoiceTurnService() {
       audioElement.value.removeAttribute("src");
       audioElement.value.load();
     }
-
-
-    if (playerVisualizer) {
-      playerVisualizer.stop();
-    }
-    if (ttsStreamPlayer) {
-      void ttsStreamPlayer.fadeOutAndStop();
-      ttsStreamPlayer = null;
-    }
+    stopPlaybackInfrastructure();
 
     currentVolume.value = 0;
-    liveCaption.value = "";
-    activeTTSStreamSessionId.value = null;
+    resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
     currentState.value = "ready";
     dispatchSystemStatus(
       activeConfig.value,
@@ -489,11 +502,8 @@ export function useVoiceTurnService() {
       currentTime: audioElement.value?.currentTime,
       duration: audioElement.value?.duration,
     });
-    if (playerVisualizer) {
-      playerVisualizer.stop();
-    }
-    liveCaption.value = "";
-    activeTTSStreamSessionId.value = null;
+    stopPlaybackInfrastructure();
+    resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
     currentVolume.value = 0;
     currentState.value = "ready";
     dispatchSystemStatus(

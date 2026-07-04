@@ -53,6 +53,7 @@ const {
   orbStyle,
   backgroundGlowStyle,
   statusLabel,
+  liveCaption,
   bindAudioElement,
   checkSystemStatus,
   handleOrbClick,
@@ -207,6 +208,16 @@ watch(
           </div>
         </div>
       </div>
+
+      <aside
+        v-if="liveCaption"
+        class="live-caption-panel"
+        aria-live="polite"
+        aria-atomic="false"
+      >
+        <span class="live-caption-label">Live Caption</span>
+        <p class="live-caption-text">{{ liveCaption }}</p>
+      </aside>
     </div>
 
     <audio ref="audioElementRef" @ended="handleAudioEnded" class="hidden-audio"></audio>
@@ -263,6 +274,8 @@ watch(
 
 .assistant-content {
   @include voice-turn-assistant-content;
+  gap: 28px;
+  justify-content: center;
 }
 
 .alert-box {
@@ -324,6 +337,39 @@ watch(
 
 .orb-status {
   text-align: center;
+}
+
+.live-caption-panel {
+  width: min(320px, 32vw);
+  min-height: 112px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 18px 20px;
+  border-radius: 20px;
+  border: 1px solid rgba($color-border-default, 0.65);
+  background: rgba($color-surface, 0.7);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px $color-modal-shadow-primary;
+}
+
+.live-caption-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: $color-text-muted;
+}
+
+.live-caption-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.65;
+  color: $color-text-primary;
+  font-weight: 500;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .status-ticker {
