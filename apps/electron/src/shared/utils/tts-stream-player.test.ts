@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+
+import { decodePcm16ToFloat32 } from './tts-stream-player.ts';
+
+const decoded = decodePcm16ToFloat32(new Uint8Array([0, 0, 255, 127]));
+
+assert.equal(decoded.length, 2);
+assert.equal(decoded[0], 0);
+assert.ok(decoded[1] > 0.99);
+
+console.log('tts stream player runtime checks passed');

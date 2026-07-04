@@ -1,4 +1,5 @@
 import { AudioPlayerVisualizer, AudioRecorder } from "../../../shared/utils/audio-recorder";
+import { TTSPcmStreamPlayer } from "../../../shared/utils/tts-stream-player";
 import { useToast } from "../../../shared/utils/toast";
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useAppSettingsService } from "../../../shared/services/appSettingsService";
@@ -58,11 +59,14 @@ export function useVoiceTurnService() {
   const currentAccentColor = ref("#7c0bcd");
   const lastTranscript = ref("");
   const lastResponse = ref("");
+  const liveCaption = ref("");
   const metrics = ref<VoiceTurnMetrics | null>(null);
+  const activeTTSStreamSessionId = ref<string | null>(null);
 
   const audioElement = ref<HTMLAudioElement | null>(null);
   let audioRecorder: AudioRecorder | null = null;
   let playerVisualizer: AudioPlayerVisualizer | null = null;
+  let ttsStreamPlayer: TTSPcmStreamPlayer | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let activeRequestController: AbortController | null = null;
   let smoothingTimer: ReturnType<typeof setInterval> | null = null;
@@ -333,6 +337,7 @@ export function useVoiceTurnService() {
       });
       lastTranscript.value = data.transcript;
       lastResponse.value = data.responseText;
+      liveCaption.value = data.responseText;
 
       metrics.value = {
         stt: data.sttDurationMs,
@@ -355,6 +360,7 @@ export function useVoiceTurnService() {
         }
 
         currentState.value = "speaking";
+        activeTTSStreamSessionId.value = null;
 
         if (!playerVisualizer) {
           playerVisualizer = new AudioPlayerVisualizer(audioElement.value, (rms: number) => {
@@ -451,8 +457,14 @@ export function useVoiceTurnService() {
     if (playerVisualizer) {
       playerVisualizer.stop();
     }
+    if (ttsStreamPlayer) {
+      void ttsStreamPlayer.fadeOutAndStop();
+      ttsStreamPlayer = null;
+    }
 
     currentVolume.value = 0;
+    liveCaption.value = "";
+    activeTTSStreamSessionId.value = null;
     currentState.value = "ready";
     dispatchSystemStatus(
       activeConfig.value,
@@ -480,6 +492,8 @@ export function useVoiceTurnService() {
     if (playerVisualizer) {
       playerVisualizer.stop();
     }
+    liveCaption.value = "";
+    activeTTSStreamSessionId.value = null;
     currentVolume.value = 0;
     currentState.value = "ready";
     dispatchSystemStatus(
@@ -564,6 +578,10 @@ export function useVoiceTurnService() {
     if (playerVisualizer) {
       playerVisualizer.close();
     }
+    if (ttsStreamPlayer) {
+      ttsStreamPlayer.close();
+      ttsStreamPlayer = null;
+    }
     activeRequestController?.abort();
   });
 
@@ -580,9 +598,11 @@ export function useVoiceTurnService() {
     statusError,
     activeConfig,
     currentVolume,
+    liveCaption,
     lastTranscript,
     lastResponse,
     metrics,
+    activeTTSStreamSessionId,
     audioElement,
     bindAudioElement,
     // Computed
