@@ -12,6 +12,12 @@ export function createTTSStreamingSessionManager(sender: SessionSender) {
     isActive(sessionId: string) {
       return activeSessions.has(sessionId);
     },
+    unregister(sessionId: string) {
+      activeSessions.delete(sessionId);
+    },
+    activeSessionIds() {
+      return [...activeSessions];
+    },
     cancel(sessionId: string, reason: string) {
       if (!activeSessions.has(sessionId)) {
         return;

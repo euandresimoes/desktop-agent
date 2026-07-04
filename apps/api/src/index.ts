@@ -1,4 +1,5 @@
 import Fastify, { fastify } from 'fastify';
+import fastifyWebsocket from '@fastify/websocket';
 import { appSetupRoutes } from './modules/app-setup/routes.ts';
 import { piperTTSRoutes } from './modules/piper-tts/routes.ts';
 import { llmRoutes } from './modules/llama-cpp/routes.ts';
@@ -21,6 +22,7 @@ export const app = Fastify({
      * Register global plugins
      */
     await app.register(fastifyMultipart);
+    await app.register(fastifyWebsocket);
 
     app.addHook('onRequest', async (request, reply) => {
       reply.header('Access-Control-Allow-Origin', '*');

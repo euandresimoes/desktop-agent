@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from api.errors import register_exception_handlers
 from api.routes import create_router
+from api.ws_routes import create_ws_router
 from core.config import build_config
 from core.engine import TTSEngine
 from core.registry import ProviderRegistry
@@ -42,3 +43,4 @@ except Exception as error:
     )
 
 app.include_router(create_router(engine, cache, default_config))
+app.include_router(create_ws_router(engine))
