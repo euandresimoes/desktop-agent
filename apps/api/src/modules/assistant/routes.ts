@@ -120,4 +120,67 @@ export async function assistantRoutes(app: FastifyInstance) {
       });
     }
   });
+
+  app.post('/voice-turn/prepare', async (request, reply) => {
+    const file = await request.file();
+
+    if (!file) {
+      return reply.status(400).send({
+        error: 'Audio file is required',
+      });
+    }
+
+    const extension = path.extname(file.filename) || '.wav';
+
+    const audioPath = path.join(
+      os.tmpdir(),
+      `${crypto.randomUUID()}${extension}`
+    );
+
+    let fileHandle: fs.FileHandle | null = null;
+
+    try {
+      fileHandle = await fs.open(audioPath, 'w');
+
+      await pipeline(
+        file.file,
+        fileHandle.createWriteStream()
+      );
+
+      await fileHandle.close();
+      fileHandle = null;
+
+      const result = await assistantService.prepareVoiceTurn({
+        audioPath,
+        requestId: request.id,
+      });
+
+      return reply.status(200).send({
+        type: 'voice_turn_preparation',
+        transcript: result.transcript,
+        responseText: result.responseText,
+        language: result.language,
+        sttModelId: result.sttModelId,
+        llmModelId: result.llmModelId,
+        llmModelName: result.llmModelName,
+        durationMs: result.durationMs,
+        sttDurationMs: result.sttDurationMs,
+        sttServerDurationMs: result.sttServerDurationMs,
+        llmDurationMs: result.llmDurationMs,
+      });
+    } catch (error) {
+      return sendErrorReply(request, reply, error, {
+        fallbackMessage: 'Failed to prepare assistant voice turn',
+        context: 'assistant:voice-turn:prepare',
+      });
+    } finally {
+      if (fileHandle) {
+        await fileHandle.close().catch(() => undefined);
+      }
+
+      await fs.rm(audioPath, {
+        force: true,
+      });
+    }
+  });
 }

@@ -1,9 +1,14 @@
-import { AudioPlayerVisualizer, AudioRecorder } from "../../../shared/utils/audio-recorder";
-import { TTSPcmStreamPlayer } from "../../../shared/utils/tts-stream-player";
-import { useToast } from "../../../shared/utils/toast";
+import { AudioPlayerVisualizer, AudioRecorder } from "../../../shared/utils/audio-recorder.ts";
+import { TTSPcmStreamPlayer } from "../../../shared/utils/tts-stream-player.ts";
+import { useToast } from "../../../shared/utils/toast.ts";
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
-import { useAppSettingsService } from "../../../shared/services/appSettingsService";
-import { AppHttpError, fetchJsonOrThrow } from "../../../shared/utils/http";
+import { useAppSettingsService } from "../../../shared/services/appSettingsService.ts";
+import {
+  fetchTTSCapabilities,
+  type TTSCapabilitiesResponse,
+} from "../../../shared/services/ttsCapabilitiesService.ts";
+import { AppHttpError, fetchJsonOrThrow } from "../../../shared/utils/http.ts";
+import { resolveTTSPlaybackMode } from "./voiceTurnPlaybackMode.ts";
 
 export type VoiceTurnState = "loading" | "not_ready" | "ready" | "recording" | "thinking" | "speaking";
 
@@ -19,6 +24,25 @@ export interface VoiceTurnMetrics {
   tts?: number;
   total?: number;
 }
+
+type AssistantVoiceTurnPreparationResponse = {
+  transcript: string;
+  responseText: string;
+  language?: string;
+  sttModelId: string;
+  llmModelId: string;
+  llmModelName: string;
+  durationMs: number;
+  sttDurationMs: number;
+  sttServerDurationMs?: number;
+  llmDurationMs: number;
+};
+
+type AssistantVoiceTurnResponse = AssistantVoiceTurnPreparationResponse & {
+  audioContentType?: string;
+  audioBase64?: string;
+  ttsDurationMs?: number;
+};
 
 function createAudioDataUrl(base64: string, mimeType: string) {
   return `data:${mimeType};base64,${base64}`;
@@ -70,11 +94,13 @@ export function useVoiceTurnService() {
   const liveCaption = ref("");
   const metrics = ref<VoiceTurnMetrics | null>(null);
   const activeTTSStreamSessionId = ref<string | null>(null);
+  const ttsCapabilities = ref<TTSCapabilitiesResponse | null>(null);
 
   const audioElement = ref<HTMLAudioElement | null>(null);
   let audioRecorder: AudioRecorder | null = null;
   let playerVisualizer: AudioPlayerVisualizer | null = null;
   let ttsStreamPlayer: TTSPcmStreamPlayer | null = null;
+  let ttsStreamingSocket: WebSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let activeRequestController: AbortController | null = null;
   let smoothingTimer: ReturnType<typeof setInterval> | null = null;
@@ -165,6 +191,14 @@ export function useVoiceTurnService() {
     }
   };
 
+  const refreshTTSCapabilities = async () => {
+    try {
+      ttsCapabilities.value = await fetchTTSCapabilities();
+    } catch {
+      ttsCapabilities.value = null;
+    }
+  };
+
   const stopPlaybackInfrastructure = () => {
     if (playerVisualizer) {
       playerVisualizer.stop();
@@ -173,6 +207,11 @@ export function useVoiceTurnService() {
     if (ttsStreamPlayer) {
       void ttsStreamPlayer.fadeOutAndStop();
       ttsStreamPlayer = null;
+    }
+
+    if (ttsStreamingSocket) {
+      ttsStreamingSocket.close();
+      ttsStreamingSocket = null;
     }
   };
 
@@ -191,6 +230,20 @@ export function useVoiceTurnService() {
       );
 
       await loadSettings();
+      await refreshTTSCapabilities();
+
+      const normalizedPlaybackMode = resolveTTSPlaybackMode(
+        settings.value.ttsPlaybackMode,
+        ttsCapabilities.value,
+      );
+
+      if (normalizedPlaybackMode !== settings.value.ttsPlaybackMode) {
+        await window.electronAPI.appSettings.update({
+          ttsPlaybackMode: normalizedPlaybackMode,
+        });
+        settings.value.ttsPlaybackMode = normalizedPlaybackMode;
+      }
+
       void syncAssistantSettingsToBackend(settings.value);
 
       if (data.ready) {
@@ -286,6 +339,218 @@ export function useVoiceTurnService() {
     }
   };
 
+  const createVoiceTurnFormData = (audioBlob: Blob) => {
+    const formData = new FormData();
+    formData.append("audio", audioBlob, "user_voice.wav");
+    return formData;
+  };
+
+  const readErrorFromResponse = async (res: Response) => {
+    const text = await res.text();
+    let payload: {
+      error?: string;
+      details?: string | null;
+      requestId?: string | null;
+      source?: string;
+    } | null = null;
+
+    try {
+      payload = JSON.parse(text) as {
+        error?: string;
+        details?: string | null;
+        requestId?: string | null;
+        source?: string;
+      };
+    } catch {
+      payload = null;
+    }
+
+    throw new AppHttpError({
+      message:
+        payload?.error
+          ? `${payload.source ? `${payload.source}: ` : ""}${payload.error}${payload.requestId ? ` (request ${payload.requestId})` : ""}`
+          : "Voice turn request failed",
+      status: res.status,
+      requestId: payload?.requestId,
+      source: payload?.source ?? "api",
+      details: payload?.details ?? text,
+      payload,
+    });
+  };
+
+  const playStandardAudioPayload = async (data: AssistantVoiceTurnResponse) => {
+    if (!data.audioBase64) {
+      console.warn("[voice-turn] response without audio payload");
+      resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+      currentState.value = "ready";
+      dispatchSystemStatus(
+        activeConfig.value,
+        metrics.value,
+        false,
+        currentVolume.value,
+      );
+      return;
+    }
+
+    if (!audioElement.value) {
+      console.error("[voice-turn] audio element is not bound");
+      throw new Error("Audio element is not available");
+    }
+
+    currentState.value = "speaking";
+    activeTTSStreamSessionId.value = null;
+
+    if (!playerVisualizer) {
+      playerVisualizer = new AudioPlayerVisualizer(audioElement.value, (rms: number) => {
+        currentVolume.value = rms;
+      });
+      playerVisualizer.setup();
+    }
+
+    const mimeType = data.audioContentType || "audio/wav";
+    console.log("[voice-turn] received audio payload", {
+      mimeType,
+      base64Length: data.audioBase64.length,
+    });
+
+    audioElement.value.src = createAudioDataUrl(data.audioBase64, mimeType);
+    audioElement.value.load();
+    await applyAudioOutputPreferences();
+
+    playerVisualizer.start();
+
+    try {
+      await audioElement.value.play();
+    } catch (playbackError) {
+      console.error("[voice-turn] audio playback failed", playbackError);
+      throw playbackError;
+    }
+  };
+
+  const playStreamingTTS = async (text: string) => {
+    const socketUrl = `${API_BASE.replace("http://", "ws://").replace("https://", "wss://")}/tts-streaming/ws`;
+    const streamPlayer = new TTSPcmStreamPlayer();
+    ttsStreamPlayer = streamPlayer;
+    await applyAudioOutputPreferences();
+
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(socketUrl);
+      ttsStreamingSocket = socket;
+      let completed = false;
+
+      socket.addEventListener("open", () => {
+        socket.send(
+          JSON.stringify({
+            type: "session.start",
+            payload: { text },
+          }),
+        );
+      });
+
+      socket.addEventListener("message", (event) => {
+        void (async () => {
+          const message = JSON.parse(String(event.data)) as {
+            type: string;
+            sessionId?: string;
+            payload?: Record<string, unknown>;
+          };
+
+          if (message.sessionId) {
+            activeTTSStreamSessionId.value = message.sessionId;
+          }
+
+          if (message.type === "text.chunk") {
+            liveCaption.value = String(message.payload?.text ?? "");
+            return;
+          }
+
+          if (message.type === "audio.chunk") {
+            currentState.value = "speaking";
+            currentVolume.value = 0.035;
+
+            const audioBase64 = String(message.payload?.audioBase64 ?? "");
+            const sampleRate = Number(message.payload?.sampleRate ?? 22050);
+            const channels = Number(message.payload?.channels ?? 1);
+            const binary = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
+
+            await streamPlayer.enqueueChunk({
+              pcmBytes: binary,
+              sampleRate,
+              channels,
+              volume: Math.min(1, Math.max(0, settings.value.outputVolume)),
+            });
+            return;
+          }
+
+          if (message.type === "metrics") {
+            metrics.value = {
+              ...metrics.value,
+              tts: Number(message.payload?.elapsedMs ?? 0),
+              total:
+                (metrics.value?.stt ?? 0) +
+                (metrics.value?.llm ?? 0) +
+                Number(message.payload?.elapsedMs ?? 0),
+            };
+            dispatchSystemStatus(
+              activeConfig.value,
+              metrics.value,
+              false,
+              currentVolume.value,
+            );
+            return;
+          }
+
+          if (message.type === "session.complete") {
+            completed = true;
+            currentState.value = "speaking";
+            window.setTimeout(() => {
+              stopPlaybackInfrastructure();
+              resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+              currentVolume.value = 0;
+              currentState.value = "ready";
+              dispatchSystemStatus(
+                activeConfig.value,
+                metrics.value,
+                false,
+                currentVolume.value,
+              );
+            }, 160);
+            socket.close();
+            resolve();
+            return;
+          }
+
+          if (message.type === "session.cancelled") {
+            completed = true;
+            socket.close();
+            resolve();
+            return;
+          }
+
+          if (message.type === "session.error") {
+            completed = true;
+            socket.close();
+            reject(
+              new Error(String(message.payload?.error ?? "TTS streaming failed")),
+            );
+          }
+        })().catch(reject);
+      });
+
+      socket.addEventListener("close", () => {
+        ttsStreamingSocket = null;
+
+        if (!completed && currentState.value === "speaking") {
+          resolve();
+        }
+      });
+
+      socket.addEventListener("error", () => {
+        reject(new Error("Failed to open TTS streaming socket"));
+      });
+    });
+  };
+
   /** Stop recording, send audio to the backend and play the response. */
   const stopRecording = async () => {
     if (currentState.value !== "recording" || !audioRecorder) return;
@@ -304,56 +569,55 @@ export function useVoiceTurnService() {
     try {
       activeRequestController?.abort();
       activeRequestController = new AbortController();
-      const formData = new FormData();
-      formData.append("audio", audioBlob, "user_voice.wav");
+      const effectivePlaybackMode = resolveTTSPlaybackMode(
+        settings.value.ttsPlaybackMode,
+        ttsCapabilities.value,
+      );
+
+      if (effectivePlaybackMode === "stream") {
+        const prepareResponse = await fetch(`${API_BASE}/assistant/voice-turn/prepare`, {
+          method: "POST",
+          body: createVoiceTurnFormData(audioBlob),
+          signal: activeRequestController.signal,
+        });
+
+        if (!prepareResponse.ok) {
+          await readErrorFromResponse(prepareResponse);
+        }
+
+        const data = (await prepareResponse.json()) as AssistantVoiceTurnPreparationResponse;
+        lastTranscript.value = data.transcript;
+        lastResponse.value = data.responseText;
+        liveCaption.value = "";
+
+        metrics.value = {
+          stt: data.sttDurationMs,
+          llm: data.llmDurationMs,
+          total: data.durationMs,
+        };
+
+        dispatchSystemStatus(
+          activeConfig.value,
+          metrics.value,
+          false,
+          currentVolume.value,
+        );
+
+        await playStreamingTTS(data.responseText);
+        return;
+      }
 
       const res = await fetch(`${API_BASE}/assistant/voice-turn`, {
         method: "POST",
-        body: formData,
+        body: createVoiceTurnFormData(audioBlob),
         signal: activeRequestController.signal,
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        let payload: {
-          error?: string;
-          details?: string | null;
-          requestId?: string | null;
-          source?: string;
-        } | null = null;
-
-        try {
-          payload = JSON.parse(text) as {
-            error?: string;
-            details?: string | null;
-            requestId?: string | null;
-            source?: string;
-          };
-        } catch {
-          payload = null;
-        }
-
-        throw new AppHttpError({
-          message:
-            payload?.error
-              ? `${payload.source ? `${payload.source}: ` : ""}${payload.error}${payload.requestId ? ` (request ${payload.requestId})` : ""}`
-              : "Voice turn request failed",
-          status: res.status,
-          requestId: payload?.requestId,
-          source: payload?.source ?? "api",
-          details: payload?.details ?? text,
-          payload,
-        });
+        await readErrorFromResponse(res);
       }
 
-      const data = await res.json();
-      console.log("[voice-turn] response payload", {
-        keys: Object.keys(data ?? {}),
-        audioContentType: data?.audioContentType,
-        audioBase64Length: typeof data?.audioBase64 === "string" ? data.audioBase64.length : null,
-        transcriptLength: typeof data?.transcript === "string" ? data.transcript.length : null,
-        responseTextLength: typeof data?.responseText === "string" ? data.responseText.length : null,
-      });
+      const data = (await res.json()) as AssistantVoiceTurnResponse;
       lastTranscript.value = data.transcript;
       lastResponse.value = data.responseText;
       liveCaption.value = data.responseText;
@@ -369,58 +633,10 @@ export function useVoiceTurnService() {
         activeConfig.value,
         metrics.value,
         false,
-        currentVolume.value
+        currentVolume.value,
       );
 
-      if (data.audioBase64) {
-        if (!audioElement.value) {
-          console.error("[voice-turn] audio element is not bound");
-          throw new Error("Audio element is not available");
-        }
-
-        currentState.value = "speaking";
-        activeTTSStreamSessionId.value = null;
-
-        if (!playerVisualizer) {
-          playerVisualizer = new AudioPlayerVisualizer(audioElement.value, (rms: number) => {
-            currentVolume.value = rms;
-          });
-          playerVisualizer.setup();
-        }
-
-        const mimeType = data.audioContentType || "audio/wav";
-        console.log("[voice-turn] received audio payload", {
-          mimeType,
-          base64Length: data.audioBase64.length,
-        });
-
-        audioElement.value.src = createAudioDataUrl(data.audioBase64, mimeType);
-        audioElement.value.load();
-        await applyAudioOutputPreferences();
-
-        playerVisualizer.start();
-        console.log("[voice-turn] audio source assigned", {
-          src: audioElement.value.src.slice(0, 48),
-        });
-
-        try {
-          await audioElement.value.play();
-          console.log("[voice-turn] audio playback started");
-        } catch (playbackError) {
-          console.error("[voice-turn] audio playback failed", playbackError);
-          throw playbackError;
-        }
-      } else {
-        console.warn("[voice-turn] response without audio payload");
-        resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
-        currentState.value = "ready";
-        dispatchSystemStatus(
-          activeConfig.value,
-          metrics.value,
-          false,
-          currentVolume.value
-        );
-      }
+      await playStandardAudioPayload(data);
     } catch (err: any) {
       if (err?.name === "AbortError") {
         resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
@@ -473,6 +689,20 @@ export function useVoiceTurnService() {
       audioElement.value.currentTime = 0;
       audioElement.value.removeAttribute("src");
       audioElement.value.load();
+    }
+
+    if (
+      ttsStreamingSocket &&
+      activeTTSStreamSessionId.value &&
+      ttsStreamingSocket.readyState === WebSocket.OPEN
+    ) {
+      ttsStreamingSocket.send(
+        JSON.stringify({
+          type: "session.cancel",
+          sessionId: activeTTSStreamSessionId.value,
+          payload: { reason: "client_cancelled" },
+        }),
+      );
     }
     stopPlaybackInfrastructure();
 
@@ -566,6 +796,7 @@ export function useVoiceTurnService() {
     void loadSettings().then(() => {
       void applyAudioOutputPreferences();
     });
+    void refreshTTSCapabilities();
     checkSystemStatus();
     window.addEventListener("refresh-status", checkSystemStatus);
     window.addEventListener("app-appearance-updated", syncAccentColor);
@@ -591,6 +822,10 @@ export function useVoiceTurnService() {
     if (ttsStreamPlayer) {
       ttsStreamPlayer.close();
       ttsStreamPlayer = null;
+    }
+    if (ttsStreamingSocket) {
+      ttsStreamingSocket.close();
+      ttsStreamingSocket = null;
     }
     activeRequestController?.abort();
   });

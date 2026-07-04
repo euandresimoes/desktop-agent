@@ -13,6 +13,7 @@ export function decodePcm16ToFloat32(input: Uint8Array) {
 export class TTSPcmStreamPlayer {
   private audioContext: AudioContext | null = null;
   private activeGainNode: GainNode | null = null;
+  private nextStartTime = 0;
 
   private ensureAudioContext() {
     if (this.audioContext) {
@@ -20,7 +21,55 @@ export class TTSPcmStreamPlayer {
     }
 
     this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    this.activeGainNode = this.audioContext.createGain();
+    this.activeGainNode.connect(this.audioContext.destination);
     return this.audioContext;
+  }
+
+  async enqueueChunk(input: {
+    pcmBytes: Uint8Array;
+    sampleRate: number;
+    channels: number;
+    volume?: number;
+  }) {
+    const audioContext = this.ensureAudioContext();
+
+    if (audioContext.state === "suspended") {
+      await audioContext.resume();
+    }
+
+    if (!this.activeGainNode) {
+      this.activeGainNode = audioContext.createGain();
+      this.activeGainNode.connect(audioContext.destination);
+    }
+
+    this.activeGainNode.gain.value = input.volume ?? 1;
+
+    const channelCount = Math.max(1, input.channels);
+    const decoded = decodePcm16ToFloat32(input.pcmBytes);
+    const frameCount = Math.floor(decoded.length / channelCount);
+    const audioBuffer = audioContext.createBuffer(
+      channelCount,
+      frameCount,
+      input.sampleRate,
+    );
+
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const channelData = audioBuffer.getChannelData(channelIndex);
+
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+        channelData[frameIndex] =
+          decoded[frameIndex * channelCount + channelIndex] ?? 0;
+      }
+    }
+
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(this.activeGainNode);
+
+    const startAt = Math.max(audioContext.currentTime + 0.01, this.nextStartTime);
+    source.start(startAt);
+    this.nextStartTime = startAt + audioBuffer.duration;
   }
 
   async fadeOutAndStop(durationMs = 30) {
@@ -49,5 +98,6 @@ export class TTSPcmStreamPlayer {
 
     this.audioContext = null;
     this.activeGainNode = null;
+    this.nextStartTime = 0;
   }
 }

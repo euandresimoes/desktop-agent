@@ -2,7 +2,11 @@ import { piperTTSService } from '../piper-tts/services.ts';
 import { appSetupService } from '../app-setup/services.ts';
 import { llmService } from '../llama-cpp/services.ts';
 import { sttService } from '../stt/services.ts';
-import type { VoiceTurnInput, VoiceTurnOutput } from './types.ts';
+import type {
+  VoiceTurnInput,
+  VoiceTurnOutput,
+  VoiceTurnPreparationOutput,
+} from './types.ts';
 
 function toBuffer(value: Buffer | Uint8Array | ArrayBuffer) {
   if (Buffer.isBuffer(value)) {
@@ -41,51 +45,10 @@ function buildTTSSpeakInput(
 }
 
 class AssistantService {
-  async speak(input: { message: string; requestId?: string }) {
-    const activeVoice = await appSetupService.getActiveVoice();
-
-    if (!activeVoice) {
-      throw new Error('No active voice configured');
-    }
-
-    const llmStartedAt = Date.now();
-
-    const llmResponse = await llmService.chat({
-      messages: [
-        {
-          role: 'user',
-          content: input.message,
-        },
-      ],
-    });
-
-    console.log('Assistant LLM took', Date.now() - llmStartedAt, 'ms');
-
-    const text = llmResponse.message?.trim();
-
-    if (!text) {
-      throw new Error('LLM returned empty response');
-    }
-
-    const ttsStartedAt = Date.now();
-
-    const audio = await piperTTSService.speak(
-      buildTTSSpeakInput(activeVoice, text, input.requestId),
-    );
-
-    console.log('Assistant TTS took', Date.now() - ttsStartedAt, 'ms');
-
-    return toBuffer(audio);
-  }
-
-  async voiceTurn(input: VoiceTurnInput): Promise<VoiceTurnOutput> {
+  async prepareVoiceTurn(
+    input: VoiceTurnInput,
+  ): Promise<VoiceTurnPreparationOutput> {
     const startedAt = Date.now();
-
-    const activeVoice = await appSetupService.getActiveVoice();
-
-    if (!activeVoice) {
-      throw new Error('No active voice configured');
-    }
 
     const sttStartedAt = Date.now();
 
@@ -125,10 +88,69 @@ class AssistantService {
       throw new Error('LLM returned empty response');
     }
 
+    return {
+      transcript,
+      responseText,
+      language: transcription.language,
+      sttModelId: transcription.modelId,
+      llmModelId: llmResponse.modelId,
+      llmModelName: llmResponse.modelName,
+      durationMs: Date.now() - startedAt,
+      sttDurationMs,
+      sttServerDurationMs: transcription.serverDurationMs,
+      llmDurationMs,
+    };
+  }
+
+  async speak(input: { message: string; requestId?: string }) {
+    const activeVoice = await appSetupService.getActiveVoice();
+
+    if (!activeVoice) {
+      throw new Error('No active voice configured');
+    }
+
+    const llmStartedAt = Date.now();
+
+    const llmResponse = await llmService.chat({
+      messages: [
+        {
+          role: 'user',
+          content: input.message,
+        },
+      ],
+    });
+
+    console.log('Assistant LLM took', Date.now() - llmStartedAt, 'ms');
+
+    const text = llmResponse.message?.trim();
+
+    if (!text) {
+      throw new Error('LLM returned empty response');
+    }
+
     const ttsStartedAt = Date.now();
 
     const audio = await piperTTSService.speak(
-      buildTTSSpeakInput(activeVoice, responseText, input.requestId),
+      buildTTSSpeakInput(activeVoice, text, input.requestId),
+    );
+
+    console.log('Assistant TTS took', Date.now() - ttsStartedAt, 'ms');
+
+    return toBuffer(audio);
+  }
+
+  async voiceTurn(input: VoiceTurnInput): Promise<VoiceTurnOutput> {
+    const activeVoice = await appSetupService.getActiveVoice();
+
+    if (!activeVoice) {
+      throw new Error('No active voice configured');
+    }
+    const prepared = await this.prepareVoiceTurn(input);
+
+    const ttsStartedAt = Date.now();
+
+    const audio = await piperTTSService.speak(
+      buildTTSSpeakInput(activeVoice, prepared.responseText, input.requestId),
     );
 
     const ttsDurationMs = Date.now() - ttsStartedAt;
@@ -136,21 +158,21 @@ class AssistantService {
     console.log('Assistant TTS took', ttsDurationMs, 'ms');
 
     return {
-      transcript,
-      responseText,
+      transcript: prepared.transcript,
+      responseText: prepared.responseText,
 
       audio: toBuffer(audio),
       audioContentType: 'audio/wav',
 
-      language: transcription.language,
-      sttModelId: transcription.modelId,
-      llmModelId: llmResponse.modelId,
-      llmModelName: llmResponse.modelName,
+      language: prepared.language,
+      sttModelId: prepared.sttModelId,
+      llmModelId: prepared.llmModelId,
+      llmModelName: prepared.llmModelName,
 
-      durationMs: Date.now() - startedAt,
-      sttDurationMs,
-      sttServerDurationMs: transcription.serverDurationMs,
-      llmDurationMs,
+      durationMs: prepared.durationMs + ttsDurationMs,
+      sttDurationMs: prepared.sttDurationMs,
+      sttServerDurationMs: prepared.sttServerDurationMs,
+      llmDurationMs: prepared.llmDurationMs,
       ttsDurationMs,
     };
   }
