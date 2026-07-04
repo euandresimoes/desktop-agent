@@ -10,6 +10,14 @@ export function decodePcm16ToFloat32(input: Uint8Array) {
   return output;
 }
 
+export function calculateStreamDrainDelayMs(
+  nextStartTime: number,
+  currentTime: number,
+  settleMs = 32,
+) {
+  return Math.max(0, Math.ceil((nextStartTime - currentTime) * 1000) + settleMs);
+}
+
 export class TTSPcmStreamPlayer {
   private audioContext: AudioContext | null = null;
   private activeGainNode: GainNode | null = null;
@@ -70,6 +78,24 @@ export class TTSPcmStreamPlayer {
     const startAt = Math.max(audioContext.currentTime + 0.01, this.nextStartTime);
     source.start(startAt);
     this.nextStartTime = startAt + audioBuffer.duration;
+  }
+
+  async waitForDrain(settleMs = 32) {
+    if (!this.audioContext) {
+      return;
+    }
+
+    const delayMs = calculateStreamDrainDelayMs(
+      this.nextStartTime,
+      this.audioContext.currentTime,
+      settleMs,
+    );
+
+    if (delayMs <= 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   async fadeOutAndStop(durationMs = 30) {

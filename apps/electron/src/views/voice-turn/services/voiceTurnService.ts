@@ -503,18 +503,17 @@ export function useVoiceTurnService() {
           if (message.type === "session.complete") {
             completed = true;
             currentState.value = "speaking";
-            window.setTimeout(() => {
-              stopPlaybackInfrastructure();
-              resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
-              currentVolume.value = 0;
-              currentState.value = "ready";
-              dispatchSystemStatus(
-                activeConfig.value,
-                metrics.value,
-                false,
-                currentVolume.value,
-              );
-            }, 160);
+            await streamPlayer.waitForDrain();
+            stopPlaybackInfrastructure();
+            resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+            currentVolume.value = 0;
+            currentState.value = "ready";
+            dispatchSystemStatus(
+              activeConfig.value,
+              metrics.value,
+              false,
+              currentVolume.value,
+            );
             socket.close();
             resolve();
             return;
