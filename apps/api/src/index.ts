@@ -8,6 +8,7 @@ import fastifyMultipart from '@fastify/multipart';
 import { sttRoutes } from './modules/stt/routes.ts';
 import { hubDownloadsRoutes } from './modules/hub-downloads/routes.ts';
 import { assistantPreferencesRoutes } from './modules/assistant-preferences/routes.ts';
+import { ttsStreamingRoutes } from './modules/tts-streaming/routes.ts';
 import { buildErrorPayload } from './shared/errors.ts';
 
 export const app = Fastify({
@@ -89,6 +90,10 @@ export const app = Fastify({
     //
     app.register(hubDownloadsRoutes, {
       prefix: '/api/v1/hub',
+    });
+    //
+    app.register(ttsStreamingRoutes, {
+      prefix: '/api/v1/tts-streaming',
     });
 
     /**
