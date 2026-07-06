@@ -17,7 +17,6 @@ const props = defineProps<{
   sttModel: NewSttForm;
   ttsModel: NewVoiceForm;
   hubSearchQuery: string;
-  hubPipelineTag: string;
   hubSort: HubSearchSortOption;
   isHubSearching: boolean;
   hubResults: HubModelSearchResult[];
@@ -37,17 +36,9 @@ const emit = defineEmits<{
   (e: "start-hub-install", result: HubModelSearchResult): void;
   (e: "cancel-hub-install"): void;
   (e: "update:hubSearchQuery", value: string): void;
-  (e: "update:hubPipelineTag", value: string): void;
   (e: "update:hubSort", value: HubSearchSortOption): void;
   (e: "update:selectedHubFile", payload: { repoId: string; fileName: string }): void;
 }>();
-
-const filters = computed(() => [
-  { value: "all", label: "All types" },
-  { value: "text-generation", label: "Text generation" },
-  { value: "automatic-speech-recognition", label: "STT" },
-  { value: "text-to-speech", label: "TTS" },
-]);
 
 const localForm = computed(() => {
   if (props.modelType === "llm") {
@@ -79,9 +70,7 @@ const handleStartDownload = (payload: { repoId: string; fileName: string }) => {
     :model-type="modelType"
     search-placeholder="Search repositories on Hugging Face..."
     :search-query="hubSearchQuery"
-    :active-filter="hubPipelineTag"
     :active-sort="hubSort"
-    :filters="filters"
     :is-searching="isHubSearching"
     :results="hubResults"
     :selected-files="selectedHubFiles"
@@ -92,7 +81,6 @@ const handleStartDownload = (payload: { repoId: string; fileName: string }) => {
     @close="emit('close')"
     @update:model-type="emit('update:modelType', $event)"
     @update:search-query="emit('update:hubSearchQuery', $event)"
-    @update:active-filter="emit('update:hubPipelineTag', $event)"
     @update:active-sort="emit('update:hubSort', $event)"
     @update:selected-file="emit('update:selectedHubFile', $event)"
     @search="emit('search-hub')"

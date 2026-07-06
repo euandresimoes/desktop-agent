@@ -47,6 +47,32 @@ export function encodeWAV(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([view], { type: 'audio/wav' });
 }
 
+export type AudioRecorderStopResult = {
+  audioBlob: Blob;
+  totalDurationMs: number;
+  speechDurationMs: number;
+  peakRms: number;
+  hasMeaningfulSpeech: boolean;
+};
+
+type AudioRecorderOptions = {
+  silenceThreshold?: number;
+  silenceDurationMs?: number;
+  selectedDeviceId?: string;
+  inputGain?: number;
+  waitForSpeechActivation?: boolean;
+  activationThreshold?: number;
+  activationMinDurationMs?: number;
+  preRollMs?: number;
+  onVolume?: (volume: number) => void;
+  onPcmChunk?: (chunk: {
+    samples: Float32Array;
+    sampleRate: number;
+  }) => void;
+  onSpeechActivation?: () => void;
+  onSilenceDetected?: () => void;
+};
+
 export class AudioRecorder {
   private audioContext: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
@@ -56,17 +82,74 @@ export class AudioRecorder {
   private samples: Float32Array[] = [];
   private totalLength = 0;
   private isRecording = false;
+  private startedAtMs = 0;
+  private speechDurationMs = 0;
+  private peakRms = 0;
+  private hasDetectedSpeech = false;
+  private isSpeechActivated = false;
+  private activationDurationMs = 0;
+  private preRollChunks: Float32Array[] = [];
+  private preRollLength = 0;
 
-  constructor(
-    private options: {
-      silenceThreshold?: number;
-      silenceDurationMs?: number;
-      selectedDeviceId?: string;
-      inputGain?: number;
-      onVolume?: (volume: number) => void;
-      onSilenceDetected?: () => void;
-    } = {}
-  ) {}
+  constructor(private options: AudioRecorderOptions = {}) {}
+
+  private resetBuffers() {
+    this.samples = [];
+    this.totalLength = 0;
+    this.speechDurationMs = 0;
+    this.peakRms = 0;
+    this.hasDetectedSpeech = false;
+    this.isSpeechActivated = !this.options.waitForSpeechActivation;
+    this.activationDurationMs = 0;
+    this.preRollChunks = [];
+    this.preRollLength = 0;
+  }
+
+  private pushPreRollChunk(chunk: Float32Array, sampleRate: number) {
+    const maxPreRollMs = this.options.preRollMs ?? 500;
+
+    if (maxPreRollMs <= 0) {
+      return;
+    }
+
+    const maxPreRollSamples = Math.max(
+      1,
+      Math.round((sampleRate * maxPreRollMs) / 1000),
+    );
+
+    this.preRollChunks.push(chunk);
+    this.preRollLength += chunk.length;
+
+    while (this.preRollLength > maxPreRollSamples && this.preRollChunks.length > 0) {
+      const removed = this.preRollChunks.shift();
+      this.preRollLength -= removed?.length ?? 0;
+    }
+  }
+
+  private appendCommittedChunk(
+    chunk: Float32Array,
+    sampleRate: number,
+    shouldEmitChunk = true,
+  ) {
+    this.samples.push(chunk);
+    this.totalLength += chunk.length;
+
+    if (shouldEmitChunk) {
+      this.options.onPcmChunk?.({
+        samples: chunk,
+        sampleRate,
+      });
+    }
+  }
+
+  private commitPreRoll(sampleRate: number) {
+    for (const chunk of this.preRollChunks) {
+      this.appendCommittedChunk(chunk, sampleRate);
+    }
+
+    this.preRollChunks = [];
+    this.preRollLength = 0;
+  }
 
   async start() {
     if (this.isRecording) return;
@@ -86,46 +169,96 @@ export class AudioRecorder {
       },
     });
 
-    this.samples = [];
-    this.totalLength = 0;
     this.isRecording = true;
+    this.startedAtMs = Date.now();
+    this.resetBuffers();
 
     this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
     this.gainNode = this.audioContext.createGain();
     this.gainNode.gain.value = this.options.inputGain ?? 1;
-    // 4096 bytes buffer, mono input, mono output
-    this.processorNode = this.audioContext.createScriptProcessor(4096, 1, 1);
+    // Smaller buffer improves chunk cadence for streaming captions.
+    this.processorNode = this.audioContext.createScriptProcessor(2048, 1, 1);
 
     let silenceStart = 0;
+    let silenceTriggered = false;
 
     this.processorNode.onaudioprocess = (e) => {
       if (!this.isRecording) return;
 
       const inputData = e.inputBuffer.getChannelData(0);
-      this.samples.push(new Float32Array(inputData));
-      this.totalLength += inputData.length;
+      const samples = new Float32Array(inputData);
+      const sampleRate = this.audioContext?.sampleRate ?? 44100;
 
       // Calculate RMS
       let sum = 0;
-      for (let i = 0; i < inputData.length; i++) {
-        sum += inputData[i] * inputData[i];
+      for (let i = 0; i < samples.length; i++) {
+        sum += samples[i] * samples[i];
       }
-      const rms = Math.sqrt(sum / inputData.length);
+      const rms = Math.sqrt(sum / samples.length);
+      const chunkDurationMs =
+        ((samples.length / (this.audioContext?.sampleRate ?? 44100)) * 1000);
+
+      this.peakRms = Math.max(this.peakRms, rms);
 
       if (this.options.onVolume) {
         this.options.onVolume(rms);
+      }
+
+      if (!this.isSpeechActivated) {
+        const activationThreshold = Math.max(
+          threshold * 2.2,
+          this.options.activationThreshold ?? 0.028,
+        );
+        const activationMinDurationMs =
+          this.options.activationMinDurationMs ?? 130;
+
+        this.pushPreRollChunk(samples, sampleRate);
+
+        if (rms >= activationThreshold) {
+          this.activationDurationMs += chunkDurationMs;
+        } else {
+          this.activationDurationMs = 0;
+        }
+
+        if (this.activationDurationMs >= activationMinDurationMs) {
+          this.isSpeechActivated = true;
+          this.hasDetectedSpeech = true;
+          this.speechDurationMs = Math.max(
+            this.speechDurationMs,
+            this.activationDurationMs,
+          );
+          this.commitPreRoll(sampleRate);
+          this.options.onSpeechActivation?.();
+          silenceStart = 0;
+          silenceTriggered = false;
+        }
+
+        return;
+      }
+
+      this.appendCommittedChunk(samples, sampleRate, true);
+
+      if (rms >= threshold) {
+        this.hasDetectedSpeech = true;
+        this.speechDurationMs += chunkDurationMs;
+        silenceStart = 0;
+        silenceTriggered = false;
+        return;
+      }
+
+      if (!this.hasDetectedSpeech) {
+        return;
       }
 
       if (rms < threshold) {
         if (silenceStart === 0) {
           silenceStart = Date.now();
         } else if (Date.now() - silenceStart >= duration) {
-          if (this.options.onSilenceDetected) {
+          if (!silenceTriggered && this.options.onSilenceDetected) {
+            silenceTriggered = true;
             this.options.onSilenceDetected();
           }
         }
-      } else {
-        silenceStart = 0;
       }
     };
 
@@ -134,9 +267,15 @@ export class AudioRecorder {
     this.processorNode.connect(this.audioContext.destination);
   }
 
-  stop(): Blob {
+  stop(): AudioRecorderStopResult {
     if (!this.isRecording) {
-      return new Blob([], { type: 'audio/wav' });
+      return {
+        audioBlob: new Blob([], { type: 'audio/wav' }),
+        totalDurationMs: 0,
+        speechDurationMs: 0,
+        peakRms: 0,
+        hasMeaningfulSpeech: false,
+      };
     }
 
     this.isRecording = false;
@@ -160,6 +299,21 @@ export class AudioRecorder {
       this.audioContext.close();
     }
 
+    if (!this.isSpeechActivated && this.options.waitForSpeechActivation) {
+      const totalDurationMs = Math.max(0, Date.now() - this.startedAtMs);
+      const peakRms = this.peakRms;
+      this.startedAtMs = 0;
+      this.resetBuffers();
+
+      return {
+        audioBlob: new Blob([], { type: "audio/wav" }),
+        totalDurationMs,
+        speechDurationMs: 0,
+        peakRms,
+        hasMeaningfulSpeech: false,
+      };
+    }
+
     const mergedSamples = new Float32Array(this.totalLength);
     let offset = 0;
     for (const chunk of this.samples) {
@@ -167,7 +321,24 @@ export class AudioRecorder {
       offset += chunk.length;
     }
 
-    return encodeWAV(mergedSamples, sampleRate);
+    const audioBlob = encodeWAV(mergedSamples, sampleRate);
+    const totalDurationMs = Math.max(0, Date.now() - this.startedAtMs);
+    const threshold = this.options.silenceThreshold ?? 0.015;
+    const speechDurationMs = Math.round(this.speechDurationMs);
+    const peakRms = this.peakRms;
+    const hasMeaningfulSpeech =
+      speechDurationMs >= 220 || peakRms >= threshold * 1.8;
+
+    this.startedAtMs = 0;
+    this.resetBuffers();
+
+    return {
+      audioBlob,
+      totalDurationMs,
+      speechDurationMs,
+      peakRms,
+      hasMeaningfulSpeech,
+    };
   }
 
   cancel() {
@@ -192,8 +363,8 @@ export class AudioRecorder {
       this.audioContext.close();
     }
 
-    this.samples = [];
-    this.totalLength = 0;
+    this.startedAtMs = 0;
+    this.resetBuffers();
   }
 }
 

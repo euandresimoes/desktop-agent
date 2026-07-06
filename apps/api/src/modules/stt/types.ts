@@ -1,5 +1,5 @@
 export type STTModelSource = 'huggingface' | 'local';
-export type STTProvider = 'faster-whisper' | 'transformers';
+export type STTProvider = 'faster-whisper' | 'transformers' | 'parakeet';
 
 export type STTDevice = 'cpu' | 'cuda' | 'auto';
 
@@ -23,6 +23,7 @@ export type STTModelConfig = {
   language?: string;
   beamSize: number;
   vadFilter: boolean;
+  cpuThreads: number;
 };
 
 export type AddSTTModelInput = {
@@ -39,6 +40,7 @@ export type AddSTTModelInput = {
   language?: string;
   beamSize?: number;
   vadFilter?: boolean;
+  cpuThreads?: number;
 };
 
 export type UpdateSTTModelInput = {
@@ -52,6 +54,7 @@ export type UpdateSTTModelInput = {
   language?: string;
   beamSize?: number;
   vadFilter?: boolean;
+  cpuThreads?: number;
 };
 
 export type TranscribeInput = {

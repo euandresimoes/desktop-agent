@@ -1,6 +1,9 @@
 fastapi
 uvicorn
+websockets
 python-multipart
 faster-whisper
 transformers
 torch
+torchaudio
+librosa

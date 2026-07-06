@@ -14,8 +14,10 @@
 
   --color-shadow: rgba(0, 0, 0, 0.262);
 
-  --color-base: #171717;
+  --color-base: #131313;
   --color-surface: #1e1e1e;
+
+  --color-overlay-base: #000000;
 
   --color-border-default: #292929;
   --color-border-active: #383838;
@@ -149,21 +151,21 @@
   --color-modal-shadow-primary: rgba(0, 0, 0, 0.262);
   --color-modal-shadow-secondary: rgba(0, 0, 0, 0.262);
 
-  --color-toast-bg: #1e1e24;
-  --color-toast-text: #e4e4e7;
-  --color-toast-close-text: #71717a;
-  --color-toast-close-text-hover: #e4e4e7;
-  --color-toast-close-bg-hover: rgba(255, 255, 255, 0.07);
-  --color-toast-shadow: rgba(0, 0, 0, 0.45);
-  --color-toast-outline: rgba(255, 255, 255, 0.04);
+  --color-toast-bg: #1e1e1e;
+  --color-toast-text: var(--color-text-primary);
+  --color-toast-close-text: var(--color-text-muted);
+  --color-toast-close-text-hover: var(--color-text-primary);
+  --color-toast-close-bg-hover: var(--color-surface);
+  --color-toast-shadow: var(--color-shadow);
+  --color-toast-outline: var(--color-border-default);
   --color-toast-success: #34d399;
-  --color-toast-success-border: rgba(52, 211, 153, 0.25);
+  --color-toast-success-border: var(--color-border-default);
   --color-toast-error: #f87171;
-  --color-toast-error-border: rgba(248, 113, 113, 0.25);
+  --color-toast-error-border: var(--color-border-default);
   --color-toast-warning: #fbbf24;
-  --color-toast-warning-border: rgba(251, 191, 36, 0.25);
+  --color-toast-warning-border: var(--color-border-default);
   --color-toast-info: #60a5fa;
-  --color-toast-info-border: rgba(96, 165, 250, 0.25);
+  --color-toast-info-border: var(--color-border-default);
 
   --color-downloads-menu-bg: rgba(23, 23, 23, 0.92);
   --color-downloads-menu-border: var(--color-border-default);

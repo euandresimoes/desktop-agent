@@ -56,8 +56,28 @@ class STTEngine:
         cached_model = self._cache.get(key)
 
         if cached_model is not None:
+            print({
+                'module': 'stt-server',
+                'event': 'model-cache-hit',
+                'provider': normalized_config.provider,
+                'modelId': normalized_config.model_id,
+                'modelPath': normalized_config.model_path,
+                'device': normalized_config.device,
+                'computeType': normalized_config.compute_type,
+                'cpuThreads': normalized_config.cpu_threads,
+            })
             return cached_model
 
+        print({
+            'module': 'stt-server',
+            'event': 'model-cache-miss',
+            'provider': normalized_config.provider,
+            'modelId': normalized_config.model_id,
+            'modelPath': normalized_config.model_path,
+            'device': normalized_config.device,
+            'computeType': normalized_config.compute_type,
+            'cpuThreads': normalized_config.cpu_threads,
+        })
         loaded_model = provider.load_model(normalized_config)
         self._cache.set(key, loaded_model)
 

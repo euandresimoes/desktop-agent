@@ -55,14 +55,14 @@ export type HubSttCompatibility =
       provider: null;
       requiredFiles: string[] | null;
       statusLabel: "Incompatible" | "Missing files";
-      typeLabel: "Other" | "CTranslate2" | "Transformers";
+      typeLabel: "Other" | "CTranslate2" | "Transformers" | "Parakeet";
     }
   | {
       compatible: true;
-      provider: "faster-whisper" | "transformers";
+      provider: "faster-whisper" | "transformers" | "parakeet";
       requiredFiles: string[];
       statusLabel: "Compatible";
-      typeLabel: "CTranslate2" | "Transformers";
+      typeLabel: "CTranslate2" | "Transformers" | "Parakeet";
     };
 
 const jobs = ref<HubInstallJob[]>([]);
@@ -126,6 +126,8 @@ const ensurePolling = () => {
 };
 
 export function useHubDownloadsService() {
+  const isParakeetHint = (value: string) => value.toLowerCase().includes("parakeet");
+
   const resolveSortParams = (sort: HubSearchSortOption) => {
     switch (sort) {
       case "downloads":
@@ -158,13 +160,22 @@ export function useHubDownloadsService() {
       `${prefix}model.bin`,
       `${prefix}config.json`,
       `${prefix}tokenizer.json`,
-      `${prefix}preprocessor_config.json`,
-      `${prefix}vocabulary.json`,
     ];
 
-    return requiredFiles.every((requiredFile) => fileSet.has(requiredFile))
-      ? requiredFiles
-      : null;
+    const vocabularyFile = [
+      `${prefix}vocabulary.json`,
+      `${prefix}vocabulary.txt`,
+    ].find((requiredFile) => fileSet.has(requiredFile));
+
+    if (!requiredFiles.every((requiredFile) => fileSet.has(requiredFile)) || !vocabularyFile) {
+      return null;
+    }
+
+    const optionalFiles = [
+      `${prefix}preprocessor_config.json`,
+    ].filter((requiredFile) => fileSet.has(requiredFile));
+
+    return [...requiredFiles, vocabularyFile, ...optionalFiles];
   };
 
   const getCompatibleTransformersBundle = (fileName: string, files: HubFileOption[]) => {
@@ -209,7 +220,11 @@ export function useHubDownloadsService() {
     return [normalizedFileName, configFile, ...processorFiles];
   };
 
-  const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCompatibility => {
+  const getSttCompatibility = (
+    fileName: string,
+    files: HubFileOption[],
+    repoId?: string,
+  ): HubSttCompatibility => {
     const fasterWhisperBundle = getCompatibleSttBundle(fileName, files);
 
     if (fasterWhisperBundle) {
@@ -225,12 +240,17 @@ export function useHubDownloadsService() {
     const transformersBundle = getCompatibleTransformersBundle(fileName, files);
 
     if (transformersBundle) {
+      const isLikelyParakeet =
+        isParakeetHint(repoId ?? "") ||
+        isParakeetHint(fileName) ||
+        files.some((file) => isParakeetHint(file.fileName));
+
       return {
         compatible: true,
-        provider: "transformers",
+        provider: isLikelyParakeet ? "parakeet" : "transformers",
         requiredFiles: transformersBundle,
         statusLabel: "Compatible",
-        typeLabel: "Transformers",
+        typeLabel: isLikelyParakeet ? "Parakeet" : "Transformers",
       };
     }
 
@@ -256,7 +276,10 @@ export function useHubDownloadsService() {
         provider: null,
         requiredFiles: null,
         statusLabel: "Missing files",
-        typeLabel: "Transformers",
+        typeLabel:
+          isParakeetHint(repoId ?? "") || isParakeetHint(fileName)
+            ? "Parakeet"
+            : "Transformers",
       };
     }
 
@@ -272,12 +295,19 @@ export function useHubDownloadsService() {
   const applyDefaultSelections = (results: HubModelSearchResult[], modelType: HubModelType) => {
     for (const result of results) {
       if (selectedFiles.value[result.repoId]) continue;
-      const compatibleFile = result.files.find((file) => isCompatibleFile(file.fileName, result.files, modelType));
+      const compatibleFile = result.files.find((file) =>
+        isCompatibleFile(file.fileName, result.files, modelType, result.repoId)
+      );
       selectedFiles.value[result.repoId] = compatibleFile?.fileName || result.files[0]?.fileName || "";
     }
   };
 
-  const isCompatibleFile = (fileName: string, files: HubFileOption[], modelType: HubModelType) => {
+  const isCompatibleFile = (
+    fileName: string,
+    files: HubFileOption[],
+    modelType: HubModelType,
+    repoId?: string,
+  ) => {
     const lower = fileName.toLowerCase();
 
     if (modelType === "llm") {
@@ -285,7 +315,7 @@ export function useHubDownloadsService() {
     }
 
     if (modelType === "stt") {
-      return getSttCompatibility(fileName, files).compatible;
+      return getSttCompatibility(fileName, files, repoId).compatible;
     }
 
     if (!lower.endsWith(".onnx")) {

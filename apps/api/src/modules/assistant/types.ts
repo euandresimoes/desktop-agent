@@ -1,6 +1,9 @@
 export type VoiceTurnInput = {
   audioPath: string;
   requestId?: string;
+  transcriptOverride?: string;
+  sttStreamingDurationMs?: number;
+  sttMode?: 'standard' | 'stream';
 };
 
 export type VoiceTurnOutput = {

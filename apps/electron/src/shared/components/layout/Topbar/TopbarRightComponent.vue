@@ -120,6 +120,9 @@ const openDownloader = () => {
                   <span>{{ formatBytes(job.downloadedBytes) }} / {{ formatBytes(job.totalBytes) }}</span>
                   <span>{{ formatSpeed(job.bytesPerSecond) }}</span>
                 </div>
+                <p v-if="job.error" class="menu-error">
+                  {{ job.error }}
+                </p>
               </div>
 
               <div class="menu-actions">
@@ -292,6 +295,13 @@ const openDownloader = () => {
 .menu-meta {
   color: $color-text-muted;
   font-size: 11px;
+}
+
+.menu-error {
+  margin: 0;
+  color: $color-toast-error;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .progress-track {

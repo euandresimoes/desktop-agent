@@ -11,6 +11,9 @@ import {
   ensureTray,
   revealWindowFromTray,
 } from "./main-process/services/trayController";
+import { createOverlayWindowController } from "./main-process/services/overlayWindowController";
+import { createOverlayHotkeyController } from "./main-process/services/overlayHotkeyController";
+import type { OverlayVoiceState } from "./main-process/services/overlayTypes";
 import type {
   AppSettings,
   AppSettingsPatch,
@@ -24,6 +27,16 @@ if (started) {
 let mainWindow: BrowserWindow | null = null;
 let isQuitting = false;
 let currentAppSettings: AppSettings | null = null;
+const overlayWindowController = createOverlayWindowController({
+  devServerUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL,
+  rendererName: MAIN_WINDOW_VITE_NAME,
+});
+const overlayHotkeyController = createOverlayHotkeyController({
+  getSettings: () => currentAppSettings,
+  openAndStartRecording: (settings) =>
+    overlayWindowController.openAndStartRecording(settings),
+  isOverlayVisible: () => overlayWindowController.isVisible(),
+});
 
 const isDev = Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL);
 
@@ -66,6 +79,8 @@ const applyAppSettings = async (
   ) {
     void warmupActiveLlmModel();
   }
+
+  overlayWindowController.applySettings(nextSettings);
 };
 
 const createWindow = async () => {
@@ -92,7 +107,10 @@ const createWindow = async () => {
       if (mainWindow) {
         ensureTray(mainWindow, quitApplication);
       }
+      return;
     }
+
+    overlayWindowController.destroy();
   });
 
   mainWindow.on("closed", () => {
@@ -129,12 +147,15 @@ const createWindow = async () => {
 // Some APIs can only be used after this event occurs.
 app.on("before-quit", () => {
   isQuitting = true;
+  overlayHotkeyController.unregisterAll();
+  overlayWindowController.destroy();
 });
 
 app.on("ready", async () => {
   const settings = await getAppSettings();
   await applyAppSettings(settings);
   await createWindow();
+  overlayHotkeyController.register();
 
   if (settings.autoWarmupLlm) {
     void warmupActiveLlmModel();
@@ -219,3 +240,16 @@ ipcMain.handle(
     return nextSettings;
   },
 );
+
+ipcMain.handle("overlay:hide", async () => {
+  overlayWindowController.hide();
+  return true;
+});
+
+ipcMain.on("overlay:set-voice-state", (_event, state: OverlayVoiceState) => {
+  overlayWindowController.setVoiceState(state);
+});
+
+ipcMain.on("overlay:renderer-ready", () => {
+  overlayWindowController.markRendererReady();
+});

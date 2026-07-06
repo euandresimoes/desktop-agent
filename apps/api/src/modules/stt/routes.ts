@@ -28,7 +28,7 @@ export async function sttRoutes(app: FastifyInstance) {
     const body = request.body as {
       id?: string;
       name?: string;
-      provider?: 'faster-whisper' | 'transformers';
+      provider?: 'faster-whisper' | 'transformers' | 'parakeet';
 
       modelSource?: 'huggingface' | 'local';
       modelPath?: string;
@@ -39,6 +39,7 @@ export async function sttRoutes(app: FastifyInstance) {
       language?: string;
       beamSize?: number;
       vadFilter?: boolean;
+      cpuThreads?: number;
     };
 
     if (!body.id || !body.name || !body.modelPath || !body.provider) {
@@ -59,6 +60,7 @@ export async function sttRoutes(app: FastifyInstance) {
         language: body.language,
         beamSize: body.beamSize,
         vadFilter: body.vadFilter,
+        cpuThreads: body.cpuThreads,
       });
 
       return reply.status(201).send(model);
@@ -100,13 +102,14 @@ export async function sttRoutes(app: FastifyInstance) {
 
     const body = request.body as {
       name?: string;
-      provider?: 'faster-whisper' | 'transformers';
+      provider?: 'faster-whisper' | 'transformers' | 'parakeet';
       modelPath?: string;
       device?: 'cpu' | 'cuda' | 'auto';
       computeType?: 'int8' | 'int8_float16' | 'float16' | 'float32';
       language?: string;
       beamSize?: number;
       vadFilter?: boolean;
+      cpuThreads?: number;
     };
 
     try {
@@ -120,6 +123,7 @@ export async function sttRoutes(app: FastifyInstance) {
         language: body.language,
         beamSize: body.beamSize,
         vadFilter: body.vadFilter,
+        cpuThreads: body.cpuThreads,
       });
     } catch (error) {
       return sendErrorReply(request, reply, error, {

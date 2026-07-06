@@ -7,6 +7,46 @@ import type { FastifyInstance } from 'fastify';
 import { assistantService } from './services.ts';
 import { sendErrorReply } from '../../shared/errors.ts';
 
+function readTranscriptOverrideField(
+  value: unknown,
+): string | undefined {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const candidate = value as { value?: unknown };
+
+  return typeof candidate.value === 'string' ? candidate.value.trim() : undefined;
+}
+
+function readNumericField(value: unknown): number | undefined {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const candidate = value as { value?: unknown };
+
+  if (typeof candidate.value !== 'string') {
+    return undefined;
+  }
+
+  const parsedValue = Number(candidate.value);
+
+  return Number.isFinite(parsedValue) ? parsedValue : undefined;
+}
+
+function readSTTModeField(
+  value: unknown,
+): 'standard' | 'stream' | undefined {
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const candidate = value as { value?: unknown };
+
+  return candidate.value === 'stream' ? 'stream' : candidate.value === 'standard' ? 'standard' : undefined;
+}
+
 export async function assistantRoutes(app: FastifyInstance) {
   app.post('/speak', async (request, reply) => {
     const body = request.body as {
@@ -27,10 +67,7 @@ export async function assistantRoutes(app: FastifyInstance) {
         requestId: request.id,
       });
 
-      return reply
-        .status(200)
-        .header('content-type', 'audio/wav')
-        .send(audio);
+      return reply.status(200).header('content-type', 'audio/wav').send(audio);
     } catch (error) {
       return sendErrorReply(request, reply, error, {
         fallbackMessage: 'Failed to synthesize assistant speech',
@@ -49,21 +86,20 @@ export async function assistantRoutes(app: FastifyInstance) {
     }
 
     const extension = path.extname(file.filename) || '.wav';
-
-    const audioPath = path.join(
-      os.tmpdir(),
-      `${crypto.randomUUID()}${extension}`
-    );
-
+    const audioPath = path.join(os.tmpdir(), `${crypto.randomUUID()}${extension}`);
     let fileHandle: fs.FileHandle | null = null;
+    const transcriptOverride = readTranscriptOverrideField(
+      file.fields.transcriptOverride,
+    );
+    const sttStreamingDurationMs = readNumericField(
+      file.fields.sttStreamingDurationMs,
+    );
+    const sttMode = readSTTModeField(file.fields.sttMode);
 
     try {
       fileHandle = await fs.open(audioPath, 'w');
 
-      await pipeline(
-        file.file,
-        fileHandle.createWriteStream()
-      );
+      await pipeline(file.file, fileHandle.createWriteStream());
 
       await fileHandle.close();
       fileHandle = null;
@@ -71,6 +107,9 @@ export async function assistantRoutes(app: FastifyInstance) {
       const result = await assistantService.voiceTurn({
         audioPath,
         requestId: request.id,
+        transcriptOverride,
+        sttStreamingDurationMs,
+        sttMode,
       });
 
       const audioBase64 = result.audio.toString('base64');
@@ -87,18 +126,14 @@ export async function assistantRoutes(app: FastifyInstance) {
 
       return reply.status(200).send({
         type: 'voice_turn',
-
         transcript: result.transcript,
         responseText: result.responseText,
-
         audioContentType: result.audioContentType,
         audioBase64,
-
         language: result.language,
         sttModelId: result.sttModelId,
         llmModelId: result.llmModelId,
         llmModelName: result.llmModelName,
-
         durationMs: result.durationMs,
         sttDurationMs: result.sttDurationMs,
         sttServerDurationMs: result.sttServerDurationMs,
@@ -131,21 +166,20 @@ export async function assistantRoutes(app: FastifyInstance) {
     }
 
     const extension = path.extname(file.filename) || '.wav';
-
-    const audioPath = path.join(
-      os.tmpdir(),
-      `${crypto.randomUUID()}${extension}`
-    );
-
+    const audioPath = path.join(os.tmpdir(), `${crypto.randomUUID()}${extension}`);
     let fileHandle: fs.FileHandle | null = null;
+    const transcriptOverride = readTranscriptOverrideField(
+      file.fields.transcriptOverride,
+    );
+    const sttStreamingDurationMs = readNumericField(
+      file.fields.sttStreamingDurationMs,
+    );
+    const sttMode = readSTTModeField(file.fields.sttMode);
 
     try {
       fileHandle = await fs.open(audioPath, 'w');
 
-      await pipeline(
-        file.file,
-        fileHandle.createWriteStream()
-      );
+      await pipeline(file.file, fileHandle.createWriteStream());
 
       await fileHandle.close();
       fileHandle = null;
@@ -153,6 +187,9 @@ export async function assistantRoutes(app: FastifyInstance) {
       const result = await assistantService.prepareVoiceTurn({
         audioPath,
         requestId: request.id,
+        transcriptOverride,
+        sttStreamingDurationMs,
+        sttMode,
       });
 
       return reply.status(200).send({

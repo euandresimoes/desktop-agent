@@ -54,6 +54,8 @@ const {
   backgroundGlowStyle,
   statusLabel,
   liveCaption,
+  partialUserCaption,
+  confirmedUserCaptions,
   bindAudioElement,
   checkSystemStatus,
   handleOrbClick,
@@ -62,9 +64,13 @@ const {
 const audioElementRef = ref<HTMLAudioElement | null>(null);
 const displayedStatusLabel = computed(() =>
   currentState.value === "thinking"
-    ? thinkingStatuses[thinkingStatusIndex.value] ?? "Processing"
+    ? (thinkingStatuses[thinkingStatusIndex.value] ?? "Processing")
     : statusLabel.value,
 );
+const hasUserSpeech = computed(
+  () => partialUserCaption.value || confirmedUserCaptions.value.length > 0,
+);
+const hasAssistantSpeech = computed(() => Boolean(liveCaption.value));
 
 const settingsService = useSettingsService(() => checkSystemStatus());
 
@@ -76,8 +82,45 @@ const openAppSettingsModal = () => {
   isAppSettingsOpen.value = true;
 };
 
+const isEditableTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName.toLowerCase();
+
+  return (
+    tagName === "input" ||
+    tagName === "textarea" ||
+    tagName === "select" ||
+    target.isContentEditable
+  );
+};
+
+const handleGlobalSpacebar = (event: KeyboardEvent) => {
+  if (
+    event.code !== "Space" ||
+    event.repeat ||
+    event.ctrlKey ||
+    event.metaKey ||
+    event.altKey ||
+    isSettingsOpen.value ||
+    isAppSettingsOpen.value ||
+    isCreateAiOpen.value ||
+    isEditableTarget(event.target)
+  ) {
+    return;
+  }
+
+  event.preventDefault();
+  handleOrbClick();
+};
+
 const openDownloaderModal = (event: Event) => {
-  const detail = "detail" in event ? (event as CustomEvent<{ modelType?: HubModelType }>).detail : undefined;
+  const detail =
+    "detail" in event
+      ? (event as CustomEvent<{ modelType?: HubModelType }>).detail
+      : undefined;
   settingsService.setHubModelType(detail?.modelType ?? "llm");
   isCreateAiOpen.value = true;
 };
@@ -94,7 +137,8 @@ const pickPrimaryLocalAsset = () => {
   return settingsService.pickFile("tts-model");
 };
 
-const saveCurrentLocalModel = () => settingsService.handleCreate(settingsService.hubModelType.value);
+const saveCurrentLocalModel = () =>
+  settingsService.handleCreate(settingsService.hubModelType.value);
 
 const stopThinkingTicker = () => {
   if (thinkingStatusTimer !== null) {
@@ -116,6 +160,7 @@ onMounted(() => {
   window.addEventListener("open-settings-modal", openSettingsModal);
   window.addEventListener("open-app-settings-modal", openAppSettingsModal);
   window.addEventListener("open-download-model-modal", openDownloaderModal);
+  window.addEventListener("keydown", handleGlobalSpacebar);
 });
 
 onBeforeUnmount(() => {
@@ -123,6 +168,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("open-settings-modal", openSettingsModal);
   window.removeEventListener("open-app-settings-modal", openAppSettingsModal);
   window.removeEventListener("open-download-model-modal", openDownloaderModal);
+  window.removeEventListener("keydown", handleGlobalSpacebar);
 });
 
 // Refresh status when settings modal closes
@@ -132,9 +178,13 @@ watch(isSettingsOpen, (isOpen) => {
   }
 });
 
-watch(audioElementRef, (element) => {
-  bindAudioElement(element);
-}, { immediate: true });
+watch(
+  audioElementRef,
+  (element) => {
+    bindAudioElement(element);
+  },
+  { immediate: true },
+);
 
 watch(
   currentState,
@@ -162,65 +212,118 @@ watch(
         </div>
       </div>
 
-      <div class="orb-container">
-        <button
-          :class="['orb-button', currentState]"
-          :disabled="currentState === 'loading' || currentState === 'not_ready'"
-          :style="orbStyle"
-          @click="handleOrbClick"
-        >
-          <span
-            v-if="currentState === 'recording'"
-            class="orb-pulse-layer layer-1"
-          />
-          <span
-            v-if="currentState === 'recording'"
-            class="orb-pulse-layer layer-2"
-          />
-          <span
-            v-if="currentState === 'recording'"
-            class="orb-pulse-layer layer-3"
-          />
-          <Mic v-if="currentState === 'ready' || currentState === 'recording'" :size="36" class="orb-icon" />
-          <Loader2 v-else-if="currentState === 'thinking' || currentState === 'loading'" :size="36" class="orb-icon spinner" />
-          <Volume2 v-else-if="currentState === 'speaking'" :size="36" class="orb-icon" />
-          <X v-else :size="36" class="orb-icon" />
-        </button>
-
-        <div class="orb-status">
-          <div
-            :class="[
-              'status-ticker',
-              {
-                'is-thinking': currentState === 'thinking',
-              },
-            ]"
-          >
-            <Transition name="status-slide">
-              <span
-                :key="`${currentState}-${displayedStatusLabel}`"
-                class="status-badge"
-                :class="currentState"
+      <div class="conversation-grid" aria-live="polite" aria-atomic="false">
+        <section class="lyrics-column lyrics-column-left">
+          <div class="lyrics-stack">
+            <TransitionGroup name="lyric-rise" tag="div" class="lyrics-list">
+              <p
+                v-for="(segment, index) in confirmedUserCaptions"
+                :key="`user-confirmed-${index}-${segment}`"
+                class="lyric-line lyric-line-confirmed"
               >
-                {{ displayedStatusLabel }}
-              </span>
+                {{ segment }}
+              </p>
+            </TransitionGroup>
+            <Transition name="lyric-soft">
+              <p
+                v-if="partialUserCaption"
+                :key="`user-partial-${partialUserCaption}`"
+                class="lyric-line lyric-line-partial"
+              >
+                {{ partialUserCaption }}
+              </p>
             </Transition>
+            <p v-if="!hasUserSpeech" class="lyric-placeholder"></p>
+          </div>
+        </section>
+
+        <div class="orb-column">
+          <div class="orb-container">
+            <button
+              :class="['orb-button', currentState]"
+              :disabled="
+                currentState === 'loading' || currentState === 'not_ready'
+              "
+              :style="orbStyle"
+              @click="handleOrbClick"
+            >
+              <span
+                v-if="currentState === 'recording'"
+                class="orb-pulse-layer layer-1"
+              />
+              <span
+                v-if="currentState === 'recording'"
+                class="orb-pulse-layer layer-2"
+              />
+              <span
+                v-if="currentState === 'recording'"
+                class="orb-pulse-layer layer-3"
+              />
+              <Mic
+                v-if="currentState === 'ready' || currentState === 'recording'"
+                :size="36"
+                class="orb-icon"
+              />
+              <Loader2
+                v-else-if="
+                  currentState === 'thinking' || currentState === 'loading'
+                "
+                :size="36"
+                class="orb-icon spinner"
+              />
+              <Volume2
+                v-else-if="currentState === 'speaking'"
+                :size="36"
+                class="orb-icon"
+              />
+              <X v-else :size="36" class="orb-icon" />
+            </button>
+
+            <div class="orb-status">
+              <div
+                :class="[
+                  'status-ticker',
+                  {
+                    'is-thinking': currentState === 'thinking',
+                  },
+                ]"
+              >
+                <Transition name="status-slide">
+                  <span
+                    :key="`${currentState}-${displayedStatusLabel}`"
+                    class="status-badge"
+                    :class="currentState"
+                  >
+                    {{ displayedStatusLabel }}
+                  </span>
+                </Transition>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <aside
-        v-if="liveCaption"
-        class="live-caption-panel"
-        aria-live="polite"
-        aria-atomic="false"
-      >
-        <span class="live-caption-label">Live Caption</span>
-        <p class="live-caption-text">{{ liveCaption }}</p>
-      </aside>
+        <section class="lyrics-column lyrics-column-right">
+          <div class="lyrics-stack">
+            <TransitionGroup name="lyric-rise" tag="div" class="lyrics-list">
+              <p
+                v-for="segment in liveCaption ? [liveCaption] : []"
+                :key="`assistant-${segment}`"
+                class="lyric-line lyric-line-assistant"
+              >
+                {{ segment }}
+              </p>
+            </TransitionGroup>
+            <p v-if="!hasAssistantSpeech" class="lyric-placeholder"></p>
+          </div>
+        </section>
+      </div>
     </div>
 
-    <audio ref="audioElementRef" @ended="handleAudioEnded" class="hidden-audio"></audio>
+    <audio
+      ref="audioElementRef"
+      @ended="handleAudioEnded"
+      class="hidden-audio"
+    ></audio>
 
     <SettingsModal
       :is-open="isSettingsOpen"
@@ -241,7 +344,6 @@ watch(
       :stt-model="settingsService.newStt.value"
       :tts-model="settingsService.newVoice.value"
       :hub-search-query="settingsService.hubSearchQuery.value"
-      :hub-pipeline-tag="settingsService.hubPipelineTag.value"
       :hub-sort="settingsService.hubSort.value"
       :is-hub-searching="settingsService.isHubSearching.value"
       :hub-results="settingsService.hubResults.value"
@@ -258,9 +360,10 @@ watch(
       @start-hub-install="settingsService.startHubInstall"
       @cancel-hub-install="settingsService.cancelHubInstall"
       @update:hub-search-query="settingsService.hubSearchQuery.value = $event"
-      @update:hub-pipeline-tag="settingsService.hubPipelineTag.value = $event"
       @update:hub-sort="settingsService.hubSort.value = $event"
-      @update:selected-hub-file="settingsService.selectedHubFiles.value[$event.repoId] = $event.fileName"
+      @update:selected-hub-file="
+        settingsService.selectedHubFiles.value[$event.repoId] = $event.fileName
+      "
     />
   </div>
 </template>
@@ -274,7 +377,7 @@ watch(
 
 .assistant-content {
   @include voice-turn-assistant-content;
-  gap: 28px;
+  gap: 32px;
   justify-content: center;
 }
 
@@ -297,6 +400,21 @@ watch(
       color: $color-text-muted;
     }
   }
+}
+
+.conversation-grid {
+  width: 100%;
+  min-height: min(520px, 72vh);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+}
+
+.orb-column {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .orb-container {
@@ -339,37 +457,67 @@ watch(
   text-align: center;
 }
 
-.live-caption-panel {
-  width: min(320px, 32vw);
-  min-height: 112px;
+.lyrics-column {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lyrics-column-left {
+  text-align: center;
+}
+
+.lyrics-column-right {
+  text-align: center;
+}
+
+.lyrics-stack {
+  width: min(100%, 360px);
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 10px;
-  padding: 18px 20px;
-  border-radius: 20px;
-  border: 1px solid rgba($color-border-default, 0.65);
-  background: rgba($color-surface, 0.7);
-  backdrop-filter: blur(16px);
-  box-shadow: 0 16px 40px $color-modal-shadow-primary;
+  overflow: hidden;
 }
 
-.live-caption-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: $color-text-muted;
+.lyrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.live-caption-text {
+.lyric-line {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.65;
   color: $color-text-primary;
-  font-weight: 500;
+  font-size: clamp(18px, 1.4vw, 30px);
+  line-height: 1.18;
+  font-weight: 600;
+  letter-spacing: -0.03em;
   white-space: pre-wrap;
   word-break: break-word;
+  text-wrap: balance;
+  text-align: start;
+}
+
+.lyric-line-confirmed,
+.lyric-line-assistant {
+  color: $color-text-primary;
+}
+
+.lyric-line-confirmed:first-child {
+  text-align: center;
+}
+
+.lyric-line-partial {
+  color: $color-text-primary;
+  font-weight: 500;
+}
+
+.lyric-placeholder {
+  min-height: clamp(30px, 3vw, 42px);
+  margin: 0;
+  opacity: 0;
 }
 
 .status-ticker {
@@ -442,9 +590,41 @@ watch(
   transform: translateY(0);
 }
 
+.lyric-rise-enter-active,
+.lyric-rise-leave-active,
+.lyric-soft-enter-active,
+.lyric-soft-leave-active {
+  transition:
+    transform 0.38s ease,
+    opacity 0.38s ease,
+    filter 0.38s ease;
+}
+
+.lyric-rise-enter-from,
+.lyric-soft-enter-from {
+  opacity: 0;
+  transform: translateY(18px);
+  filter: blur(5px);
+}
+
+.lyric-rise-leave-to,
+.lyric-soft-leave-to {
+  opacity: 0;
+  transform: translateY(-18px);
+  filter: blur(5px);
+}
+
+.lyric-rise-move {
+  transition: transform 0.38s ease;
+}
+
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes orb-pulse-ring {
@@ -470,6 +650,25 @@ watch(
 
   to {
     background-position: -20% 0;
+  }
+}
+
+@media (max-width: 980px) {
+  .conversation-grid {
+    min-height: auto;
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .lyrics-column-left,
+  .lyrics-column-right {
+    justify-content: center;
+    text-align: center;
+    min-height: 0;
+  }
+
+  .lyrics-stack {
+    width: min(100%, 560px);
   }
 }
 </style>

@@ -7,8 +7,15 @@ import {
   fetchTTSCapabilities,
   type TTSCapabilitiesResponse,
 } from "../../../shared/services/ttsCapabilitiesService.ts";
+import {
+  fetchSTTStreamingCapabilities,
+  type STTStreamingCapabilitiesResponse,
+} from "../../../shared/services/sttStreamingCapabilitiesService.ts";
+import { normalizeSTTPlaybackModeAgainstCapabilities } from "../../../shared/services/sttPlaybackModeService.ts";
+import { voiceDetectionSensitivityToThreshold } from "../../../shared/services/voiceDetectionSensitivityService.ts";
 import { AppHttpError, fetchJsonOrThrow } from "../../../shared/utils/http.ts";
 import { resolveTTSPlaybackMode } from "./voiceTurnPlaybackMode.ts";
+import { createSTTStreamingClient } from "./stt-streaming-client.ts";
 
 export type VoiceTurnState = "loading" | "not_ready" | "ready" | "recording" | "thinking" | "speaking";
 
@@ -24,6 +31,12 @@ export interface VoiceTurnMetrics {
   tts?: number;
   total?: number;
 }
+
+const STREAMING_TRANSCRIPT_REJECTION_PATTERNS = [
+  /legendas pela comunidade de amara\.org/i,
+  /amara\.org/i,
+  /subtitles by/i,
+];
 
 type AssistantVoiceTurnPreparationResponse = {
   transcript: string;
@@ -42,6 +55,25 @@ type AssistantVoiceTurnResponse = AssistantVoiceTurnPreparationResponse & {
   audioContentType?: string;
   audioBase64?: string;
   ttsDurationMs?: number;
+};
+
+type VoiceTurnDiagnostics = {
+  recordingStartedAtMs?: number;
+  recordingStoppedAtMs?: number;
+  requestStartedAtMs?: number;
+  responseReceivedAtMs?: number;
+  ttsStreamOpenedAtMs?: number;
+  firstTtsTextAtMs?: number;
+  firstTtsAudioAtMs?: number;
+  sttMode?: "standard" | "stream";
+  usedTranscriptOverride?: boolean;
+};
+
+type StartRecordingOptions = {
+  waitForSpeechActivation?: boolean;
+  maxActivationWaitMs?: number;
+  onSpeechActivation?: () => void;
+  onActivationTimeout?: () => void;
 };
 
 function createAudioDataUrl(base64: string, mimeType: string) {
@@ -72,10 +104,8 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 }
 
 function resetStreamingSessionState(
-  liveCaption: { value: string },
   activeTTSStreamSessionId: { value: string | null },
 ) {
-  liveCaption.value = "";
   activeTTSStreamSessionId.value = null;
 }
 
@@ -92,18 +122,45 @@ export function useVoiceTurnService() {
   const lastTranscript = ref("");
   const lastResponse = ref("");
   const liveCaption = ref("");
+  const partialUserCaption = ref("");
+  const confirmedUserCaptions = ref<string[]>([]);
   const metrics = ref<VoiceTurnMetrics | null>(null);
   const activeTTSStreamSessionId = ref<string | null>(null);
   const ttsCapabilities = ref<TTSCapabilitiesResponse | null>(null);
+  const sttStreamingCapabilities = ref<STTStreamingCapabilitiesResponse | null>(null);
 
   const audioElement = ref<HTMLAudioElement | null>(null);
   let audioRecorder: AudioRecorder | null = null;
   let playerVisualizer: AudioPlayerVisualizer | null = null;
   let ttsStreamPlayer: TTSPcmStreamPlayer | null = null;
   let ttsStreamingSocket: WebSocket | null = null;
+  let sttStreamingClient: ReturnType<typeof createSTTStreamingClient> | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let activeRequestController: AbortController | null = null;
   let smoothingTimer: ReturnType<typeof setInterval> | null = null;
+  let streamedTranscriptResolver: ((text: string) => void) | null = null;
+  let streamedTranscriptRejecter: ((error: Error) => void) | null = null;
+  let streamedTranscriptPromise: Promise<string> | null = null;
+  let recordingStartedAtMs: number | null = null;
+  let streamedTranscriptDurationMs = 0;
+  let isStoppingRecording = false;
+  let interactionGeneration = 0;
+  let activationWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let hasSpeechActivationInCurrentRecording = false;
+  let diagnostics: VoiceTurnDiagnostics = {};
+
+  const isRejectedStreamingTranscript = (value: string) =>
+    STREAMING_TRANSCRIPT_REJECTION_PATTERNS.some((pattern) => pattern.test(value));
+
+  const normalizeStreamingTranscript = (value: string) => {
+    const normalized = value.trim();
+
+    if (!normalized || isRejectedStreamingTranscript(normalized)) {
+      return "";
+    }
+
+    return normalized;
+  };
 
   const parseCssColorToRgb = (value: string) => {
     const trimmed = value.trim();
@@ -199,6 +256,99 @@ export function useVoiceTurnService() {
     }
   };
 
+  const refreshSTTStreamingCapabilities = async () => {
+    try {
+      sttStreamingCapabilities.value = await fetchSTTStreamingCapabilities();
+    } catch {
+      sttStreamingCapabilities.value = null;
+    }
+  };
+
+  const resetUserStreamingCaptionState = () => {
+    partialUserCaption.value = "";
+    confirmedUserCaptions.value = [];
+    streamedTranscriptPromise = null;
+    streamedTranscriptResolver = null;
+    streamedTranscriptRejecter = null;
+    streamedTranscriptDurationMs = 0;
+  };
+
+  const resetDiagnostics = () => {
+    diagnostics = {};
+  };
+
+  const clearActivationWaitTimer = () => {
+    if (activationWaitTimer !== null) {
+      clearTimeout(activationWaitTimer);
+      activationWaitTimer = null;
+    }
+  };
+
+  const buildCurrentStreamingTranscriptCandidate = () => {
+    const confirmed = confirmedUserCaptions.value
+      .map((segment) => normalizeStreamingTranscript(segment))
+      .filter(Boolean);
+    const partial = normalizeStreamingTranscript(partialUserCaption.value);
+
+    return [...confirmed, partial].filter(Boolean).join(" ").trim();
+  };
+
+  const waitForStreamedTranscript = async (
+    committedTranscriptPromise?: Promise<string>,
+  ) => {
+    if (!streamedTranscriptPromise) {
+      return "";
+    }
+
+    try {
+      const resolved = await Promise.race<string>([
+        committedTranscriptPromise ?? streamedTranscriptPromise,
+        new Promise<string>((resolve) => {
+          setTimeout(() => {
+            resolve(buildCurrentStreamingTranscriptCandidate());
+          }, 4200);
+        }),
+      ]);
+
+      return resolved.trim();
+    } catch {
+      return buildCurrentStreamingTranscriptCandidate();
+    }
+  };
+
+  const logVoiceTurnDiagnostics = (label: string) => {
+    const elapsed = (start?: number, end?: number) =>
+      typeof start === "number" && typeof end === "number"
+        ? end - start
+        : undefined;
+
+    console.log("[voice-turn] diagnostics", {
+      label,
+      sttMode: diagnostics.sttMode,
+      usedTranscriptOverride: diagnostics.usedTranscriptOverride,
+      recordingMs: elapsed(
+        diagnostics.recordingStartedAtMs,
+        diagnostics.recordingStoppedAtMs,
+      ),
+      requestMs: elapsed(
+        diagnostics.requestStartedAtMs,
+        diagnostics.responseReceivedAtMs,
+      ),
+      ttsSocketReadyDelayMs: elapsed(
+        diagnostics.responseReceivedAtMs,
+        diagnostics.ttsStreamOpenedAtMs,
+      ),
+      firstTtsTextDelayMs: elapsed(
+        diagnostics.responseReceivedAtMs,
+        diagnostics.firstTtsTextAtMs,
+      ),
+      firstTtsAudioDelayMs: elapsed(
+        diagnostics.responseReceivedAtMs,
+        diagnostics.firstTtsAudioAtMs,
+      ),
+    });
+  };
+
   const stopPlaybackInfrastructure = () => {
     if (playerVisualizer) {
       playerVisualizer.stop();
@@ -213,6 +363,17 @@ export function useVoiceTurnService() {
       ttsStreamingSocket.close();
       ttsStreamingSocket = null;
     }
+  };
+
+  const restoreReadyState = () => {
+    currentState.value = "ready";
+    currentVolume.value = 0;
+    dispatchSystemStatus(
+      activeConfig.value,
+      metrics.value,
+      false,
+      currentVolume.value,
+    );
   };
 
   /** Check backend status — retries every 3 s while the API is unreachable. */
@@ -231,6 +392,19 @@ export function useVoiceTurnService() {
 
       await loadSettings();
       await refreshTTSCapabilities();
+      await refreshSTTStreamingCapabilities();
+
+      const normalizedSTTMode = normalizeSTTPlaybackModeAgainstCapabilities(
+        settings.value.sttPlaybackMode,
+        sttStreamingCapabilities.value,
+      );
+
+      if (normalizedSTTMode !== settings.value.sttPlaybackMode) {
+        await window.electronAPI.appSettings.update({
+          sttPlaybackMode: normalizedSTTMode,
+        });
+        settings.value.sttPlaybackMode = normalizedSTTMode;
+      }
 
       const normalizedPlaybackMode = resolveTTSPlaybackMode(
         settings.value.ttsPlaybackMode,
@@ -246,11 +420,20 @@ export function useVoiceTurnService() {
 
       void syncAssistantSettingsToBackend(settings.value);
 
+      const canMutateStatusState =
+        currentState.value === "loading" ||
+        currentState.value === "not_ready" ||
+        currentState.value === "ready";
+
       if (data.ready) {
-        currentState.value = "ready";
+        if (canMutateStatusState) {
+          currentState.value = "ready";
+        }
         statusError.value = null;
       } else {
-        currentState.value = "not_ready";
+        if (canMutateStatusState) {
+          currentState.value = "not_ready";
+        }
         if (!data.python.installed) {
           statusError.value = "Python is not installed in the global environment.";
         } else if (!data.piper.installed) {
@@ -277,11 +460,17 @@ export function useVoiceTurnService() {
       dispatchSystemStatus(
         activeConfig.value,
         metrics.value,
-        false,
+        currentState.value === "recording",
         currentVolume.value
       );
     } catch {
-      currentState.value = "loading";
+      if (
+        currentState.value === "loading" ||
+        currentState.value === "not_ready" ||
+        currentState.value === "ready"
+      ) {
+        currentState.value = "loading";
+      }
       statusError.value = null;
       retryTimer = setTimeout(() => {
         retryTimer = null;
@@ -291,19 +480,40 @@ export function useVoiceTurnService() {
   };
 
   /** Start recording from the microphone. */
-  const startRecording = async () => {
+  const startRecording = async (options?: StartRecordingOptions) => {
     if (currentState.value !== "ready") return;
 
     try {
       await loadSettings();
+      resetUserStreamingCaptionState();
+      liveCaption.value = "";
+      resetDiagnostics();
+      clearActivationWaitTimer();
+      hasSpeechActivationInCurrentRecording = false;
+      isStoppingRecording = false;
+      interactionGeneration += 1;
+      const interactionId = interactionGeneration;
       currentState.value = "recording";
       currentVolume.value = 0;
+      recordingStartedAtMs = Date.now();
+      diagnostics.recordingStartedAtMs = recordingStartedAtMs;
+      diagnostics.sttMode = normalizeSTTPlaybackModeAgainstCapabilities(
+        settings.value.sttPlaybackMode,
+        sttStreamingCapabilities.value,
+      );
+      const silenceThreshold = voiceDetectionSensitivityToThreshold(
+        settings.value.voiceDetectionSensitivity,
+      );
 
       audioRecorder = new AudioRecorder({
-        silenceThreshold: 0.012,
-        silenceDurationMs: 2000,
+        silenceThreshold,
+        silenceDurationMs: 900,
         selectedDeviceId: settings.value.audioInputDeviceId || undefined,
         inputGain: settings.value.microphoneGain,
+        waitForSpeechActivation: options?.waitForSpeechActivation ?? false,
+        activationThreshold: Math.max(silenceThreshold * 2.35, 0.03),
+        activationMinDurationMs: options?.waitForSpeechActivation ? 140 : 0,
+        preRollMs: options?.waitForSpeechActivation ? 500 : 0,
         onVolume: (rms: number) => {
           currentVolume.value = rms;
           dispatchSystemStatus(
@@ -312,6 +522,89 @@ export function useVoiceTurnService() {
             true,
             currentVolume.value
           );
+        },
+        onPcmChunk: (chunk) => {
+          if (
+            diagnostics.sttMode !== "stream" ||
+            !sttStreamingCapabilities.value?.streaming.supported
+          ) {
+            return;
+          }
+
+          if (!sttStreamingClient) {
+            sttStreamingClient = createSTTStreamingClient({
+              onReady: () => {},
+              onPartial: ({ text }) => {
+                const normalized = normalizeStreamingTranscript(text);
+                if (!normalized) {
+                  return;
+                }
+                console.log("[voice-turn] partial transcript", {
+                  text: normalized,
+                  length: normalized.length,
+                });
+                partialUserCaption.value = normalized;
+              },
+              onConfirmed: ({ text }) => {
+                const normalized = normalizeStreamingTranscript(text);
+                if (!normalized) {
+                  return;
+                }
+                console.log("[voice-turn] confirmed transcript segment", {
+                  text: normalized,
+                  length: normalized.length,
+                });
+                confirmedUserCaptions.value = [...confirmedUserCaptions.value, normalized];
+                partialUserCaption.value = "";
+              },
+              onFinal: ({ text }) => {
+                const normalized = normalizeStreamingTranscript(text);
+                console.log("[voice-turn] final streamed transcript", {
+                  text: normalized,
+                  length: normalized.length,
+                });
+                if (normalized) {
+                  lastTranscript.value = normalized;
+                }
+                partialUserCaption.value = "";
+                if (normalized) {
+                  confirmedUserCaptions.value = [normalized];
+                }
+                streamedTranscriptResolver?.(normalized);
+              },
+              onError: (error) => {
+                streamedTranscriptRejecter?.(error);
+              },
+            });
+
+            streamedTranscriptPromise = new Promise<string>((resolve, reject) => {
+              streamedTranscriptResolver = resolve;
+              streamedTranscriptRejecter = reject;
+            });
+
+            void sttStreamingClient
+              .connect({
+                sampleRate: chunk.sampleRate,
+                channels: 1,
+                encoding: "pcm_f32le",
+              })
+              .then(() => {
+                sttStreamingClient?.sendChunk(chunk.samples);
+              })
+              .catch((error) => {
+                console.warn("[voice-turn] failed to start stt streaming", error);
+              });
+            return;
+          }
+
+          sttStreamingClient.sendChunk(chunk.samples);
+        },
+        onSpeechActivation: () => {
+          hasSpeechActivationInCurrentRecording = true;
+          clearActivationWaitTimer();
+          partialUserCaption.value = "";
+          confirmedUserCaptions.value = [];
+          options?.onSpeechActivation?.();
         },
         onSilenceDetected: () => {
           stopRecording();
@@ -326,8 +619,41 @@ export function useVoiceTurnService() {
       );
 
       await audioRecorder.start();
+
+      if (
+        options?.waitForSpeechActivation &&
+        (options.maxActivationWaitMs ?? 0) > 0
+      ) {
+        activationWaitTimer = setTimeout(() => {
+          if (
+            interactionId !== interactionGeneration ||
+            currentState.value !== "recording" ||
+            hasSpeechActivationInCurrentRecording
+          ) {
+            return;
+          }
+
+          clearActivationWaitTimer();
+          if (audioRecorder) {
+            audioRecorder.cancel();
+            audioRecorder = null;
+          }
+          if (sttStreamingClient) {
+            void sttStreamingClient.cancel();
+            sttStreamingClient.close();
+            sttStreamingClient = null;
+          }
+          recordingStartedAtMs = null;
+          currentVolume.value = 0;
+          resetUserStreamingCaptionState();
+          restoreReadyState();
+          void options.onActivationTimeout?.();
+        }, options.maxActivationWaitMs);
+      }
     } catch (err: any) {
       console.error("Failed to start recording:", err);
+      clearActivationWaitTimer();
+      hasSpeechActivationInCurrentRecording = false;
       currentState.value = "ready";
       dispatchSystemStatus(
         activeConfig.value,
@@ -339,9 +665,24 @@ export function useVoiceTurnService() {
     }
   };
 
-  const createVoiceTurnFormData = (audioBlob: Blob) => {
+  const createVoiceTurnFormData = (input: {
+    audioBlob: Blob;
+    transcriptOverride?: string;
+    sttMode?: "standard" | "stream";
+    sttStreamingDurationMs?: number;
+  }) => {
     const formData = new FormData();
-    formData.append("audio", audioBlob, "user_voice.wav");
+    if (input.transcriptOverride?.trim()) {
+      formData.append("transcriptOverride", input.transcriptOverride.trim());
+    }
+    formData.append("sttMode", input.sttMode ?? "standard");
+    if (input.transcriptOverride && (input.sttStreamingDurationMs ?? 0) > 0) {
+      formData.append(
+        "sttStreamingDurationMs",
+        String(input.sttStreamingDurationMs),
+      );
+    }
+    formData.append("audio", input.audioBlob, "user_voice.wav");
     return formData;
   };
 
@@ -381,7 +722,7 @@ export function useVoiceTurnService() {
   const playStandardAudioPayload = async (data: AssistantVoiceTurnResponse) => {
     if (!data.audioBase64) {
       console.warn("[voice-turn] response without audio payload");
-      resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+      resetStreamingSessionState(activeTTSStreamSessionId);
       currentState.value = "ready";
       dispatchSystemStatus(
         activeConfig.value,
@@ -439,6 +780,7 @@ export function useVoiceTurnService() {
       let completed = false;
 
       socket.addEventListener("open", () => {
+        diagnostics.ttsStreamOpenedAtMs = Date.now();
         socket.send(
           JSON.stringify({
             type: "session.start",
@@ -460,11 +802,14 @@ export function useVoiceTurnService() {
           }
 
           if (message.type === "text.chunk") {
+            diagnostics.firstTtsTextAtMs ??= Date.now();
+            currentState.value = "speaking";
             liveCaption.value = String(message.payload?.text ?? "");
             return;
           }
 
           if (message.type === "audio.chunk") {
+            diagnostics.firstTtsAudioAtMs ??= Date.now();
             currentState.value = "speaking";
             currentVolume.value = 0.035;
 
@@ -505,7 +850,7 @@ export function useVoiceTurnService() {
             currentState.value = "speaking";
             await streamPlayer.waitForDrain();
             stopPlaybackInfrastructure();
-            resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+            resetStreamingSessionState(activeTTSStreamSessionId);
             currentVolume.value = 0;
             currentState.value = "ready";
             dispatchSystemStatus(
@@ -552,12 +897,18 @@ export function useVoiceTurnService() {
 
   /** Stop recording, send audio to the backend and play the response. */
   const stopRecording = async () => {
-    if (currentState.value !== "recording" || !audioRecorder) return;
+    if (currentState.value !== "recording" || !audioRecorder || isStoppingRecording) {
+      return;
+    }
 
-    currentState.value = "thinking";
-    const audioBlob = audioRecorder.stop();
+    const interactionId = interactionGeneration;
+    isStoppingRecording = true;
+    clearActivationWaitTimer();
+    const stopResult = audioRecorder.stop();
+    const audioBlob = stopResult.audioBlob;
     audioRecorder = null;
     currentVolume.value = 0;
+    diagnostics.recordingStoppedAtMs = Date.now();
     dispatchSystemStatus(
       activeConfig.value,
       metrics.value,
@@ -568,16 +919,50 @@ export function useVoiceTurnService() {
     try {
       activeRequestController?.abort();
       activeRequestController = new AbortController();
+      let transcriptOverride: string | undefined;
+
+      if (diagnostics.sttMode === "stream" && sttStreamingClient) {
+        const sttWaitStartedAt = Date.now();
+        const committedTranscriptPromise = sttStreamingClient.commit("recording_finished");
+        const optimisticTranscript = buildCurrentStreamingTranscriptCandidate();
+        transcriptOverride = (
+          optimisticTranscript ||
+          (await waitForStreamedTranscript(committedTranscriptPromise))
+        ) || undefined;
+        streamedTranscriptDurationMs = Date.now() - sttWaitStartedAt;
+      }
+
+      transcriptOverride = normalizeStreamingTranscript(transcriptOverride ?? "") || undefined;
+
+      diagnostics.usedTranscriptOverride = Boolean(transcriptOverride?.trim());
+
+      const hasRecordedAudio = audioBlob.size > 44 && stopResult.hasMeaningfulSpeech;
+      const hasTranscriptOverride = Boolean(transcriptOverride?.trim());
+
+      if (!hasRecordedAudio && !hasTranscriptOverride) {
+        resetStreamingSessionState(activeTTSStreamSessionId);
+        restoreReadyState();
+        return;
+      }
+
+      currentState.value = "thinking";
+
       const effectivePlaybackMode = resolveTTSPlaybackMode(
         settings.value.ttsPlaybackMode,
         ttsCapabilities.value,
       );
 
       if (effectivePlaybackMode === "stream") {
+        diagnostics.requestStartedAtMs = Date.now();
         const prepareResponse = await fetch(`${API_BASE}/assistant/voice-turn/prepare`, {
           method: "POST",
-          body: createVoiceTurnFormData(audioBlob),
-          signal: activeRequestController.signal,
+          body: createVoiceTurnFormData({
+            audioBlob,
+            transcriptOverride,
+            sttMode: diagnostics.sttMode,
+            sttStreamingDurationMs: streamedTranscriptDurationMs,
+          }),
+          signal: activeRequestController?.signal,
         });
 
         if (!prepareResponse.ok) {
@@ -585,9 +970,15 @@ export function useVoiceTurnService() {
         }
 
         const data = (await prepareResponse.json()) as AssistantVoiceTurnPreparationResponse;
+        if (interactionId !== interactionGeneration) {
+          return;
+        }
+        diagnostics.responseReceivedAtMs = Date.now();
         lastTranscript.value = data.transcript;
         lastResponse.value = data.responseText;
         liveCaption.value = "";
+        partialUserCaption.value = "";
+        confirmedUserCaptions.value = data.transcript ? [data.transcript] : [];
 
         metrics.value = {
           stt: data.sttDurationMs,
@@ -602,14 +993,21 @@ export function useVoiceTurnService() {
           currentVolume.value,
         );
 
+        logVoiceTurnDiagnostics("prepare-complete");
         await playStreamingTTS(data.responseText);
         return;
       }
 
+      diagnostics.requestStartedAtMs = Date.now();
       const res = await fetch(`${API_BASE}/assistant/voice-turn`, {
         method: "POST",
-        body: createVoiceTurnFormData(audioBlob),
-        signal: activeRequestController.signal,
+        body: createVoiceTurnFormData({
+          audioBlob,
+          transcriptOverride,
+          sttMode: diagnostics.sttMode,
+          sttStreamingDurationMs: streamedTranscriptDurationMs,
+        }),
+        signal: activeRequestController?.signal,
       });
 
       if (!res.ok) {
@@ -617,9 +1015,15 @@ export function useVoiceTurnService() {
       }
 
       const data = (await res.json()) as AssistantVoiceTurnResponse;
+      if (interactionId !== interactionGeneration) {
+        return;
+      }
+      diagnostics.responseReceivedAtMs = Date.now();
       lastTranscript.value = data.transcript;
       lastResponse.value = data.responseText;
       liveCaption.value = data.responseText;
+      partialUserCaption.value = "";
+      confirmedUserCaptions.value = data.transcript ? [data.transcript] : [];
 
       metrics.value = {
         stt: data.sttDurationMs,
@@ -635,18 +1039,15 @@ export function useVoiceTurnService() {
         currentVolume.value,
       );
 
+      logVoiceTurnDiagnostics("voice-turn-complete");
       await playStandardAudioPayload(data);
     } catch (err: any) {
+      if (interactionId !== interactionGeneration) {
+        return;
+      }
       if (err?.name === "AbortError") {
-        resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
-        currentState.value = "ready";
-        currentVolume.value = 0;
-        dispatchSystemStatus(
-          activeConfig.value,
-          metrics.value,
-          false,
-          currentVolume.value
-        );
+        resetStreamingSessionState(activeTTSStreamSessionId);
+        restoreReadyState();
         return;
       }
 
@@ -660,27 +1061,41 @@ export function useVoiceTurnService() {
           payload: err.payload,
         });
       }
-      resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
-      currentState.value = "ready";
-      dispatchSystemStatus(
-        activeConfig.value,
-        metrics.value,
-        false,
-        currentVolume.value
-      );
+      resetStreamingSessionState(activeTTSStreamSessionId);
+      restoreReadyState();
       toast.error("Error processing speech: " + err.message);
     } finally {
+      if (sttStreamingClient) {
+        sttStreamingClient.close();
+        sttStreamingClient = null;
+      }
       activeRequestController = null;
+      recordingStartedAtMs = null;
+      isStoppingRecording = false;
+      hasSpeechActivationInCurrentRecording = false;
+      clearActivationWaitTimer();
+      resetDiagnostics();
     }
   };
 
   const cancelInteraction = () => {
+    interactionGeneration += 1;
     activeRequestController?.abort();
     activeRequestController = null;
+    recordingStartedAtMs = null;
+    clearActivationWaitTimer();
+    hasSpeechActivationInCurrentRecording = false;
+    resetDiagnostics();
 
     if (currentState.value === "recording" && audioRecorder) {
       audioRecorder.cancel();
       audioRecorder = null;
+    }
+
+    if (sttStreamingClient) {
+      void sttStreamingClient.cancel();
+      sttStreamingClient.close();
+      sttStreamingClient = null;
     }
 
     if (currentState.value === "speaking" && audioElement.value) {
@@ -706,7 +1121,9 @@ export function useVoiceTurnService() {
     stopPlaybackInfrastructure();
 
     currentVolume.value = 0;
-    resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+    liveCaption.value = "";
+    resetStreamingSessionState(activeTTSStreamSessionId);
+    resetUserStreamingCaptionState();
     currentState.value = "ready";
     dispatchSystemStatus(
       activeConfig.value,
@@ -719,7 +1136,7 @@ export function useVoiceTurnService() {
   /** Toggle recording on orb click. */
   const handleOrbClick = () => {
     if (currentState.value === "ready") {
-      startRecording();
+      void startRecording();
     } else if (currentState.value === "recording" || currentState.value === "thinking" || currentState.value === "speaking") {
       cancelInteraction();
     }
@@ -732,7 +1149,11 @@ export function useVoiceTurnService() {
       duration: audioElement.value?.duration,
     });
     stopPlaybackInfrastructure();
-    resetStreamingSessionState(liveCaption, activeTTSStreamSessionId);
+    resetStreamingSessionState(activeTTSStreamSessionId);
+    recordingStartedAtMs = null;
+    clearActivationWaitTimer();
+    hasSpeechActivationInCurrentRecording = false;
+    resetDiagnostics();
     currentVolume.value = 0;
     currentState.value = "ready";
     dispatchSystemStatus(
@@ -796,6 +1217,7 @@ export function useVoiceTurnService() {
       void applyAudioOutputPreferences();
     });
     void refreshTTSCapabilities();
+    void refreshSTTStreamingCapabilities();
     checkSystemStatus();
     window.addEventListener("refresh-status", checkSystemStatus);
     window.addEventListener("app-appearance-updated", syncAccentColor);
@@ -813,6 +1235,7 @@ export function useVoiceTurnService() {
   onBeforeUnmount(() => {
     if (retryTimer !== null) clearTimeout(retryTimer);
     if (smoothingTimer !== null) clearInterval(smoothingTimer);
+    clearActivationWaitTimer();
     window.removeEventListener("refresh-status", checkSystemStatus);
     window.removeEventListener("app-appearance-updated", syncAccentColor);
     if (playerVisualizer) {
@@ -825,6 +1248,10 @@ export function useVoiceTurnService() {
     if (ttsStreamingSocket) {
       ttsStreamingSocket.close();
       ttsStreamingSocket = null;
+    }
+    if (sttStreamingClient) {
+      sttStreamingClient.close();
+      sttStreamingClient = null;
     }
     activeRequestController?.abort();
   });
@@ -843,6 +1270,8 @@ export function useVoiceTurnService() {
     activeConfig,
     currentVolume,
     liveCaption,
+    partialUserCaption,
+    confirmedUserCaptions,
     lastTranscript,
     lastResponse,
     metrics,

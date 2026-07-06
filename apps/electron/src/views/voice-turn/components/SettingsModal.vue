@@ -231,6 +231,10 @@ const openCurrentTtsFolder = async () => {
             <template #control><div class="narrow"><BaseInput v-model="currentStt.beamSize" type="number" /></div></template>
           </BaseSettingsRow>
           <BaseSettingsRow>
+            <template #copy><strong>CPU threads</strong><span>Number of CPU threads available to this STT model during local inference.</span></template>
+            <template #control><div class="narrow"><BaseInput v-model="currentStt.cpuThreads" type="number" /></div></template>
+          </BaseSettingsRow>
+          <BaseSettingsRow>
             <template #copy><strong>Voice activity detection</strong><span>Filter silence and non-speech more aggressively.</span></template>
             <template #control><BaseToggle v-model="currentStt.vadFilter" /></template>
           </BaseSettingsRow>

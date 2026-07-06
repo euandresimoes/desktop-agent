@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AudioLines, Computer, Palette, SlidersHorizontal } from "@lucide/vue";
+import { AudioLines, Computer, Monitor, Palette, SlidersHorizontal } from "@lucide/vue";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import BaseSelect, {
   type BaseSelectOption,
@@ -8,11 +8,13 @@ import BaseSlider from "../../shared/components/Base/BaseSlider.vue";
 import BaseTextarea from "../../shared/components/Base/BaseTextarea.vue";
 import BaseToggle from "../../shared/components/Base/BaseToggle.vue";
 import BaseInput from "../../shared/components/Base/BaseInput.vue";
+import BaseAudioRecorderPreview from "../../shared/components/Base/BaseAudioRecorderPreview.vue";
 import BaseSettingsModalShell from "../../shared/components/Base/BaseSettingsModalShell.vue";
 import BaseSettingsRow from "../../shared/components/Base/BaseSettingsRow.vue";
 import BaseSettingsSection from "../../shared/components/Base/BaseSettingsSection.vue";
 import BaseSettingsSidebarItem from "../../shared/components/Base/BaseSettingsSidebarItem.vue";
 import BaseSettingsAccentRow from "../../shared/components/Base/BaseSettingsAccentRow.vue";
+import BaseScreenPositionPicker from "../../shared/components/Base/BaseScreenPositionPicker.vue";
 import { APP_ACCENT_PRESETS } from "../../shared/config/appAccents";
 import BaseSettingsThemeRow from "../../shared/components/Base/BaseSettingsThemeRow.vue";
 import { APP_THEMES } from "../../shared/config/appThemes";
@@ -25,8 +27,19 @@ import {
   type TTSCapabilitiesResponse,
 } from "../../shared/services/ttsCapabilitiesService";
 import {
+  fetchSTTStreamingCapabilities,
+  type STTStreamingCapabilitiesResponse,
+} from "../../shared/services/sttStreamingCapabilitiesService";
+import {
+  mapSTTCapabilitiesToModeOptions,
+  normalizeSTTPlaybackModeAgainstCapabilities,
+} from "../../shared/services/sttPlaybackModeService";
+import {
+  type AppOverlayAnimation,
   type AppAccentMode,
+  type AppOverlayPosition,
   type AppSettings,
+  type AppSttPlaybackMode,
   type AppThemeId,
 } from "../../shared/types/app-settings";
 
@@ -38,7 +51,7 @@ const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
-type AppSettingsTab = "general" | "appearance" | "audio" | "advanced";
+type AppSettingsTab = "general" | "appearance" | "audio" | "overlay" | "advanced";
 
 const LANGUAGE_OPTIONS: BaseSelectOption[] = [
   { value: "Portuguese (Brazil)", label: "Portuguese (Brazil)" },
@@ -47,15 +60,24 @@ const LANGUAGE_OPTIONS: BaseSelectOption[] = [
   { value: "Japanese", label: "Japanese" },
 ];
 
+const OVERLAY_ANIMATION_OPTIONS: BaseSelectOption[] = [
+  { value: "fade", label: "Fade" },
+  { value: "slide", label: "Slide" },
+  { value: "pop", label: "Pop" },
+];
+
 const activeTab = ref<AppSettingsTab>("general");
 const { settings, loadSettings, updateSettings } = useAppSettingsService();
 const activeTheme = computed(
-  () => APP_THEMES.find((theme) => theme.id === settings.value.themeId) ?? APP_THEMES[0],
+  () =>
+    APP_THEMES.find((theme) => theme.id === settings.value.themeId) ??
+    APP_THEMES[0],
 );
 
 const inputDevices = ref<BaseSelectOption[]>([]);
 const outputDevices = ref<BaseSelectOption[]>([]);
 const ttsCapabilities = ref<TTSCapabilitiesResponse | null>(null);
+const sttCapabilities = ref<STTStreamingCapabilitiesResponse | null>(null);
 const agentNameDraft = ref("");
 const responseLanguageDraft = ref("");
 const customSystemPromptDraft = ref("");
@@ -79,8 +101,17 @@ const ttsPlaybackModeOptions = computed<BaseSelectOption[]>(() => {
   return mapTTSCapabilitiesToModeOptions(ttsCapabilities.value);
 });
 
+const sttPlaybackModeOptions = computed<BaseSelectOption[]>(() =>
+  mapSTTCapabilitiesToModeOptions(sttCapabilities.value),
+);
+
 const handleToggle =
-  (key: keyof Pick<AppSettings, "launchMaximized" | "openOnStartup" | "closeToTray" | "autoWarmupLlm">) =>
+  (
+    key: keyof Pick<
+      AppSettings,
+      "launchMaximized" | "openOnStartup" | "closeToTray" | "autoWarmupLlm"
+    >,
+  ) =>
   (value: boolean) => {
     void updateSettings({ [key]: value });
   };
@@ -109,12 +140,34 @@ const handleMicrophoneGainChange = (value: number) => {
   void updateSettings({ microphoneGain: value });
 };
 
+const handleVoiceDetectionSensitivityChange = (value: number) => {
+  void updateSettings({ voiceDetectionSensitivity: value });
+};
+
 const handleOutputVolumeChange = (value: number) => {
   void updateSettings({ outputVolume: value });
 };
 
 const handleTtsPlaybackModeChange = (value: string) => {
-  void updateSettings({ ttsPlaybackMode: value as AppSettings["ttsPlaybackMode"] });
+  void updateSettings({
+    ttsPlaybackMode: value as AppSettings["ttsPlaybackMode"],
+  });
+};
+
+const handleOverlayPositionChange = (value: AppOverlayPosition) => {
+  void updateSettings({ overlayPosition: value });
+};
+
+const handleOverlayOpacityChange = (value: number) => {
+  void updateSettings({ overlayOpacity: value });
+};
+
+const handleOverlayAnimationChange = (value: string) => {
+  void updateSettings({ overlayAnimation: value as AppOverlayAnimation });
+};
+
+const handleSttPlaybackModeChange = (value: string) => {
+  void updateSettings({ sttPlaybackMode: value as AppSttPlaybackMode });
 };
 
 const queueAdvancedUpdate = () => {
@@ -126,7 +179,8 @@ const queueAdvancedUpdate = () => {
     advancedSaveTimer = null;
     void updateSettings({
       agentName: agentNameDraft.value.trim() || "Desktop Agent",
-      responseLanguage: responseLanguageDraft.value.trim() || "Portuguese (Brazil)",
+      responseLanguage:
+        responseLanguageDraft.value.trim() || "Portuguese (Brazil)",
       customSystemPrompt: customSystemPromptDraft.value.trim(),
     });
   }, 220);
@@ -169,6 +223,23 @@ const refreshTTSCapabilities = async () => {
   }
 };
 
+const refreshSTTCapabilities = async () => {
+  try {
+    sttCapabilities.value = await fetchSTTStreamingCapabilities();
+
+    const normalizedMode = normalizeSTTPlaybackModeAgainstCapabilities(
+      settings.value.sttPlaybackMode,
+      sttCapabilities.value,
+    );
+
+    if (normalizedMode !== settings.value.sttPlaybackMode) {
+      void updateSettings({ sttPlaybackMode: normalizedMode });
+    }
+  } catch {
+    sttCapabilities.value = null;
+  }
+};
+
 watch(
   () => props.isOpen,
   (isOpen) => {
@@ -177,8 +248,12 @@ watch(
         syncDraftsFromSettings();
       });
       void refreshAudioDevices();
+      void refreshSTTCapabilities();
       void refreshTTSCapabilities();
-      navigator.mediaDevices?.addEventListener?.("devicechange", refreshAudioDevices);
+      navigator.mediaDevices?.addEventListener?.(
+        "devicechange",
+        refreshAudioDevices,
+      );
       return;
     }
 
@@ -187,18 +262,26 @@ watch(
       advancedSaveTimer = null;
       void updateSettings({
         agentName: agentNameDraft.value.trim() || "Desktop Agent",
-        responseLanguage: responseLanguageDraft.value.trim() || "Portuguese (Brazil)",
+        responseLanguage:
+          responseLanguageDraft.value.trim() || "Portuguese (Brazil)",
         customSystemPrompt: customSystemPromptDraft.value.trim(),
       });
     }
 
-    navigator.mediaDevices?.removeEventListener?.("devicechange", refreshAudioDevices);
+    navigator.mediaDevices?.removeEventListener?.(
+      "devicechange",
+      refreshAudioDevices,
+    );
   },
   { immediate: true },
 );
 
 watch(
-  () => [settings.value.agentName, settings.value.responseLanguage, settings.value.customSystemPrompt],
+  () => [
+    settings.value.agentName,
+    settings.value.responseLanguage,
+    settings.value.customSystemPrompt,
+  ],
   () => {
     if (!props.isOpen || activeTab.value !== "advanced") {
       syncDraftsFromSettings();
@@ -211,7 +294,10 @@ onBeforeUnmount(() => {
     clearTimeout(advancedSaveTimer);
   }
 
-  navigator.mediaDevices?.removeEventListener?.("devicechange", refreshAudioDevices);
+  navigator.mediaDevices?.removeEventListener?.(
+    "devicechange",
+    refreshAudioDevices,
+  );
 });
 </script>
 
@@ -241,6 +327,12 @@ onBeforeUnmount(() => {
         label="Audio"
         :active="activeTab === 'audio'"
         @click="activeTab = 'audio'"
+      />
+      <BaseSettingsSidebarItem
+        :icon="Monitor"
+        label="Overlay"
+        :active="activeTab === 'overlay'"
+        @click="activeTab = 'overlay'"
       />
       <BaseSettingsSidebarItem
         :icon="SlidersHorizontal"
@@ -280,7 +372,9 @@ onBeforeUnmount(() => {
       <BaseSettingsRow>
         <template #copy>
           <strong>Close to tray</strong>
-          <span>Hide the app to the system tray when you close the window.</span>
+          <span
+            >Hide the app to the system tray when you close the window.</span
+          >
         </template>
         <template #control>
           <BaseToggle
@@ -293,7 +387,10 @@ onBeforeUnmount(() => {
       <BaseSettingsRow>
         <template #copy>
           <strong>Auto warm up LLM model</strong>
-          <span>Prepare the active language model on startup for faster first replies.</span>
+          <span
+            >Prepare the active language model on startup for faster first
+            replies.</span
+          >
         </template>
         <template #control>
           <BaseToggle
@@ -357,18 +454,62 @@ onBeforeUnmount(() => {
 
       <BaseSettingsRow>
         <template #copy>
+          <strong>Microphone preview</strong>
+          <span
+            >Record and replay a short sample to test your microphone with the
+            current gain.</span
+          >
+        </template>
+        <template #control>
+          <div class="preview-wrap">
+            <BaseAudioRecorderPreview
+              :input-device-id="settings.audioInputDeviceId"
+              :output-device-id="settings.audioOutputDeviceId"
+              :input-gain="settings.microphoneGain"
+            />
+          </div>
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
           <strong>Microphone gain</strong>
-          <span>Boost or tame the captured microphone signal before transcription.</span>
+          <span
+            >Boost or tame the captured microphone signal before
+            transcription.</span
+          >
         </template>
         <template #control>
           <div class="slider-wrap">
             <BaseSlider
               :model-value="settings.microphoneGain"
               :min="0"
-              :max="2"
+              :max="5"
               :step="0.05"
               :format-value="(value) => `${value.toFixed(2)}x`"
               @update:modelValue="handleMicrophoneGainChange"
+            />
+          </div>
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
+          <strong>Voice sensitivity</strong>
+          <span
+            >Control how easily very low sounds count as voice. Lower values
+            ignore more background noise.</span
+          >
+        </template>
+        <template #control>
+          <div class="slider-wrap">
+            <BaseSlider
+              :model-value="settings.voiceDetectionSensitivity"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              :format-value="(value) => value.toFixed(2)"
+              @update:modelValue="handleVoiceDetectionSensitivityChange"
             />
           </div>
         </template>
@@ -395,6 +536,26 @@ onBeforeUnmount(() => {
 
       <BaseSettingsRow>
         <template #copy>
+          <strong>STT recognition mode</strong>
+          <span>
+            {{
+              sttCapabilities?.streaming.supported
+                ? "Use standard recognition for the most stable flow, or enable streaming for live transcript feedback."
+                : "Use the stable final transcription flow. Streaming is unavailable for the current STT provider."
+            }}
+          </span>
+        </template>
+        <template #control>
+          <BaseSelect
+            :model-value="settings.sttPlaybackMode"
+            :options="sttPlaybackModeOptions"
+            @update:modelValue="handleSttPlaybackModeChange"
+          />
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
           <strong>TTS playback mode</strong>
           <span>
             {{
@@ -414,15 +575,85 @@ onBeforeUnmount(() => {
       </BaseSettingsRow>
     </BaseSettingsSection>
 
+    <BaseSettingsSection v-if="activeTab === 'overlay'" title="Overlay">
+      <BaseSettingsRow :first="true">
+        <template #copy>
+          <strong>Screen position</strong>
+          <span>Choose where the compact voice overlay should appear when opened by hotkey.</span>
+        </template>
+        <template #control>
+          <BaseScreenPositionPicker
+            :model-value="settings.overlayPosition"
+            @update:modelValue="handleOverlayPositionChange"
+          />
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
+          <strong>Keyboard shortcuts</strong>
+          <span>
+            Press <strong>Ctrl + Space</strong> to open the overlay already listening, and press <strong>Esc</strong> to close it.
+          </span>
+        </template>
+        <template #control>
+          <div class="shortcut-pill-wrap">
+            <span class="shortcut-pill">Ctrl + Space</span>
+            <span class="shortcut-pill">Esc</span>
+          </div>
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
+          <strong>Overlay opacity</strong>
+          <span>Adjust how translucent the floating overlay card should feel.</span>
+        </template>
+        <template #control>
+          <div class="slider-wrap">
+            <BaseSlider
+              :model-value="settings.overlayOpacity"
+              :min="0.45"
+              :max="1"
+              :step="0.01"
+              :format-value="(value) => `${Math.round(value * 100)}%`"
+              @update:modelValue="handleOverlayOpacityChange"
+            />
+          </div>
+        </template>
+      </BaseSettingsRow>
+
+      <BaseSettingsRow>
+        <template #copy>
+          <strong>Overlay animation</strong>
+          <span>Choose how the overlay should animate in and out on screen.</span>
+        </template>
+        <template #control>
+          <BaseSelect
+            :model-value="settings.overlayAnimation"
+            :options="OVERLAY_ANIMATION_OPTIONS"
+            @update:modelValue="handleOverlayAnimationChange"
+          />
+        </template>
+      </BaseSettingsRow>
+    </BaseSettingsSection>
+
     <BaseSettingsSection v-if="activeTab === 'advanced'" title="Advanced">
       <BaseSettingsRow :first="true">
         <template #copy>
           <strong>Agent name</strong>
-          <span>Define how the assistant should refer to itself during conversations.</span>
+          <span
+            >Define how the assistant should refer to itself during
+            conversations.</span
+          >
         </template>
         <template #control>
           <div class="narrow">
-            <BaseInput v-model="agentNameDraft" placeholder="Desktop Agent" @update:modelValue="queueAdvancedUpdate" />
+            <BaseInput
+              v-model="agentNameDraft"
+              placeholder="Desktop Agent"
+              @update:modelValue="queueAdvancedUpdate"
+            />
           </div>
         </template>
       </BaseSettingsRow>
@@ -430,7 +661,10 @@ onBeforeUnmount(() => {
       <BaseSettingsRow>
         <template #copy>
           <strong>Reply language</strong>
-          <span>Choose the language the assistant should always use when answering.</span>
+          <span
+            >Choose the language the assistant should always use when
+            answering.</span
+          >
         </template>
         <template #control>
           <BaseSelect
@@ -444,7 +678,10 @@ onBeforeUnmount(() => {
       <BaseSettingsRow>
         <template #copy>
           <strong>Custom system prompt</strong>
-          <span>Add extra behavior instructions. The backend will merge them into an English system prompt automatically.</span>
+          <span
+            >Add extra behavior instructions. The backend will merge them into
+            an English system prompt automatically.</span
+          >
         </template>
         <template #control>
           <div class="textarea-wrap">
@@ -470,7 +707,30 @@ onBeforeUnmount(() => {
   width: 240px;
 }
 
+.preview-wrap {
+  width: min(100%, 420px);
+}
+
 .textarea-wrap {
   width: 320px;
+}
+
+.shortcut-pill-wrap {
+  display: flex;
+  gap: 8px;
+}
+
+.shortcut-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-default);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
 }
 </style>

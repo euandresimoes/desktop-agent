@@ -4,11 +4,15 @@ import path from "node:path";
 import {
   DEFAULT_APP_SETTINGS,
   isAppAccentMode,
+  isAppOverlayAnimation,
+  isAppOverlayPosition,
+  isAppSttPlaybackMode,
   isAppThemeId,
   isAppTtsPlaybackMode,
   type AppSettings,
   type AppSettingsPatch,
 } from "../../shared/types/app-settings";
+import { normalizeVoiceDetectionSensitivity } from "../../shared/services/voiceDetectionSensitivityService";
 
 const SETTINGS_FILE_NAME = "app-settings.json";
 
@@ -58,7 +62,13 @@ const sanitizePatch = (patch: AppSettingsPatch): AppSettingsPatch => {
       patch.microphoneGain,
       DEFAULT_APP_SETTINGS.microphoneGain,
       0,
-      2,
+      5,
+    );
+  }
+
+  if (typeof patch.voiceDetectionSensitivity === "number") {
+    nextPatch.voiceDetectionSensitivity = normalizeVoiceDetectionSensitivity(
+      patch.voiceDetectionSensitivity,
     );
   }
 
@@ -98,8 +108,29 @@ const sanitizePatch = (patch: AppSettingsPatch): AppSettingsPatch => {
     nextPatch.accentColor = patch.accentColor.trim();
   }
 
+  if (isAppSttPlaybackMode(patch.sttPlaybackMode)) {
+    nextPatch.sttPlaybackMode = patch.sttPlaybackMode;
+  }
+
   if (isAppTtsPlaybackMode(patch.ttsPlaybackMode)) {
     nextPatch.ttsPlaybackMode = patch.ttsPlaybackMode;
+  }
+
+  if (typeof patch.overlayOpacity === "number") {
+    nextPatch.overlayOpacity = normalizeNumber(
+      patch.overlayOpacity,
+      DEFAULT_APP_SETTINGS.overlayOpacity,
+      0.45,
+      1,
+    );
+  }
+
+  if (isAppOverlayAnimation(patch.overlayAnimation)) {
+    nextPatch.overlayAnimation = patch.overlayAnimation;
+  }
+
+  if (isAppOverlayPosition(patch.overlayPosition)) {
+    nextPatch.overlayPosition = patch.overlayPosition;
   }
 
   return nextPatch;

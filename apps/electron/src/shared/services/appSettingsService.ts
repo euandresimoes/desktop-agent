@@ -7,6 +7,7 @@ import {
   APP_THEME_STORAGE_KEY,
   DEFAULT_APP_SETTINGS,
   isAppAccentMode,
+  isAppSttPlaybackMode,
   isAppThemeId,
   isAppTtsPlaybackMode,
   type AppSettings,
@@ -77,6 +78,7 @@ const mergeSettings = (patch?: Partial<AppSettings>) => {
   let themeId = DEFAULT_APP_SETTINGS.themeId;
   let accentMode = DEFAULT_APP_SETTINGS.accentMode;
   let accentColor = DEFAULT_APP_SETTINGS.accentColor;
+  let sttPlaybackMode = DEFAULT_APP_SETTINGS.sttPlaybackMode;
   let ttsPlaybackMode = DEFAULT_APP_SETTINGS.ttsPlaybackMode;
 
   if (isAppThemeId(patch?.themeId)) {
@@ -109,6 +111,10 @@ const mergeSettings = (patch?: Partial<AppSettings>) => {
     );
   }
 
+  if (isAppSttPlaybackMode(patch?.sttPlaybackMode)) {
+    sttPlaybackMode = patch.sttPlaybackMode;
+  }
+
   if (isAppTtsPlaybackMode(patch?.ttsPlaybackMode)) {
     ttsPlaybackMode = patch.ttsPlaybackMode;
   }
@@ -119,6 +125,7 @@ const mergeSettings = (patch?: Partial<AppSettings>) => {
     themeId,
     accentMode,
     accentColor,
+    sttPlaybackMode,
     ttsPlaybackMode,
   } satisfies AppSettings;
 };

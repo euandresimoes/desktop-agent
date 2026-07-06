@@ -17,7 +17,7 @@ import type {
 type DownloaderLocalForm = {
   id: string;
   name: string;
-  provider?: "faster-whisper" | "transformers";
+  provider?: "faster-whisper" | "transformers" | "parakeet";
   modelTempPath?: string;
   modelPath?: string;
   configTempPath?: string;
@@ -52,9 +52,7 @@ const props = withDefaults(defineProps<{
   modelType: HubModelType;
   searchPlaceholder?: string;
   searchQuery: string;
-  activeFilter: string;
   activeSort: HubSearchSortOption;
-  filters: Array<{ value: string; label: string }>;
   isSearching: boolean;
   results: HubModelSearchResult[];
   selectedFiles: Record<string, string>;
@@ -72,7 +70,6 @@ const emit = defineEmits<{
   (e: "close"): void;
   (e: "update:modelType", value: HubModelType): void;
   (e: "update:searchQuery", value: string): void;
-  (e: "update:activeFilter", value: string): void;
   (e: "update:activeSort", value: HubSearchSortOption): void;
   (e: "update:selectedFile", payload: { repoId: string; fileName: string }): void;
   (e: "search"): void;
@@ -102,10 +99,18 @@ const sortOptions = [
   { value: "newest", label: "Newest" },
 ] satisfies Array<{ value: HubSearchSortOption; label: string }>;
 
+const handleModelTypeChange = (value: HubModelType) => {
+  selectedRepoId.value = null;
+  emit("update:modelType", value);
+};
+
 const sttProviderOptions = [
   { value: "faster-whisper", label: "Faster-Whisper" },
+  { value: "parakeet", label: "Parakeet" },
   { value: "transformers", label: "Transformers" },
 ];
+
+const isParakeetHint = (value: string) => value.toLowerCase().includes("parakeet");
 
 const selectedResult = computed(
   () => props.results.find((result) => result.repoId === selectedRepoId.value) ?? null
@@ -216,16 +221,29 @@ const getSttBundleFiles = (fileName: string, files: HubFileOption[]) => {
     `${prefix}model.bin`,
     `${prefix}config.json`,
     `${prefix}tokenizer.json`,
-    `${prefix}preprocessor_config.json`,
-    `${prefix}vocabulary.json`,
   ];
 
-  return requiredFiles.every((requiredFile) => fileSet.has(requiredFile))
-    ? requiredFiles
-    : null;
+  const vocabularyFile = [
+    `${prefix}vocabulary.json`,
+    `${prefix}vocabulary.txt`,
+  ].find((requiredFile) => fileSet.has(requiredFile));
+
+  if (!requiredFiles.every((requiredFile) => fileSet.has(requiredFile)) || !vocabularyFile) {
+    return null;
+  }
+
+  const optionalFiles = [
+    `${prefix}preprocessor_config.json`,
+  ].filter((requiredFile) => fileSet.has(requiredFile));
+
+  return [...requiredFiles, vocabularyFile, ...optionalFiles];
 };
 
-const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCompatibility => {
+const getSttCompatibility = (
+  fileName: string,
+  files: HubFileOption[],
+  repoId?: string,
+): HubSttCompatibility => {
   const fasterWhisperBundle = getSttBundleFiles(fileName, files);
 
   if (fasterWhisperBundle) {
@@ -265,22 +283,30 @@ const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCo
     ].filter((candidate) => fileSet.has(candidate));
 
     if (fileSet.has(configFile) && processorFiles.length > 0) {
+      const isLikelyParakeet =
+        isParakeetHint(repoId ?? "") ||
+        isParakeetHint(fileName) ||
+        files.some((item) => isParakeetHint(item.fileName));
+
       return {
         compatible: true,
-        provider: "transformers",
+        provider: isLikelyParakeet ? "parakeet" : "transformers",
         requiredFiles: [normalizedFileName, configFile, ...processorFiles],
         statusLabel: "Compatible",
-        typeLabel: "Transformers",
+        typeLabel: isLikelyParakeet ? "Parakeet" : "Transformers",
       };
     }
 
-    return {
-      compatible: false,
-      provider: null,
-      requiredFiles: null,
-      statusLabel: "Missing files",
-      typeLabel: "Transformers",
-    };
+      return {
+        compatible: false,
+        provider: null,
+        requiredFiles: null,
+        statusLabel: "Missing files",
+        typeLabel:
+          isParakeetHint(repoId ?? "") || isParakeetHint(fileName)
+            ? "Parakeet"
+            : "Transformers",
+      };
   }
 
   if (lowerFileName.endsWith("/model.bin") || lowerFileName === "model.bin") {
@@ -302,7 +328,11 @@ const getSttCompatibility = (fileName: string, files: HubFileOption[]): HubSttCo
   };
 };
 
-const getCompatibility = (file: HubFileOption, files: HubFileOption[]): FileCompatibility => {
+const getCompatibility = (
+  file: HubFileOption,
+  files: HubFileOption[],
+  repoId?: string,
+): FileCompatibility => {
   const lower = file.fileName.toLowerCase();
 
   if (props.modelType === "llm") {
@@ -312,7 +342,11 @@ const getCompatibility = (file: HubFileOption, files: HubFileOption[]): FileComp
   }
 
   if (props.modelType === "stt") {
-    const compatibility = getSttCompatibility(file.fileName, files);
+    const compatibility = getSttCompatibility(
+      file.fileName,
+      files,
+      repoId,
+    );
     return {
       typeLabel: compatibility.typeLabel,
       statusLabel: compatibility.statusLabel,
@@ -339,7 +373,9 @@ const getCompatibility = (file: HubFileOption, files: HubFileOption[]): FileComp
 };
 
 const repositoryStatus = (result: HubModelSearchResult) => {
-  const compatibleFiles = result.files.filter((file) => getCompatibility(file, result.files).isCompatible);
+  const compatibleFiles = result.files.filter((file) =>
+    getCompatibility(file, result.files, result.repoId).isCompatible
+  );
 
   if (props.modelType === "llm") {
     return compatibleFiles.length > 0
@@ -354,7 +390,7 @@ const repositoryStatus = (result: HubModelSearchResult) => {
   }
 
   const hasOnnxWithoutConfig = result.files.some((file) => {
-    const compatibility = getCompatibility(file, result.files);
+    const compatibility = getCompatibility(file, result.files, result.repoId);
     return compatibility.typeLabel === "ONNX" && compatibility.statusTone === "warning";
   });
 
@@ -402,7 +438,11 @@ const fileTreeRows = computed<FileTreeRow[]>(() => {
       });
     }
 
-    const compatibility = getCompatibility(file, selectedResult.value.files);
+    const compatibility = getCompatibility(
+      file,
+      selectedResult.value.files,
+      selectedResult.value.repoId,
+    );
     rows.push({
       id: `file:${normalizedPath}`,
       kind: "file",
@@ -487,34 +527,36 @@ watch(
         </button>
       </div>
 
-      <div class="model-type-tabs">
-        <button
-          v-for="tab in modelTypeTabs"
-          :key="tab.value"
-          :class="['model-type-tab', { active: modelType === tab.value }]"
-          type="button"
-          @click="emit('update:modelType', tab.value)"
-        >
-          <component :is="tab.icon" :size="14" />
-          <span>{{ tab.label }}</span>
-        </button>
-      </div>
+      <div class="downloader-toolbar">
+        <div class="model-type-tabs">
+          <button
+            v-for="tab in modelTypeTabs"
+            :key="tab.value"
+            :class="['model-type-tab', { active: modelType === tab.value }]"
+            type="button"
+            @click="handleModelTypeChange(tab.value)"
+          >
+            <component :is="tab.icon" :size="14" />
+            <span>{{ tab.label }}</span>
+          </button>
+        </div>
 
-      <div class="downloader-tabs">
-        <button
-          :class="['source-tab', { active: activeSourceTab === 'online' }]"
-          type="button"
-          @click="activeSourceTab = 'online'"
-        >
-          Online
-        </button>
-        <button
-          :class="['source-tab', { active: activeSourceTab === 'local' }]"
-          type="button"
-          @click="activeSourceTab = 'local'"
-        >
-          Local
-        </button>
+        <div class="downloader-tabs">
+          <button
+            :class="['source-tab', { active: activeSourceTab === 'online' }]"
+            type="button"
+            @click="activeSourceTab = 'online'"
+          >
+            Online
+          </button>
+          <button
+            :class="['source-tab', { active: activeSourceTab === 'local' }]"
+            type="button"
+            @click="activeSourceTab = 'local'"
+          >
+            Local
+          </button>
+        </div>
       </div>
 
       <div class="downloader-stage">
@@ -525,13 +567,6 @@ watch(
               :placeholder="searchPlaceholder"
               @update:model-value="emit('update:searchQuery', String($event))"
               @keydown.enter="emit('search')"
-            />
-
-            <BaseSelect
-              :model-value="activeFilter"
-              :options="filters"
-              class="filter-select"
-              @update:model-value="emit('update:activeFilter', $event)"
             />
 
             <BaseSelect
@@ -562,6 +597,9 @@ watch(
               <span>{{ formatSpeed(activeJob.bytesPerSecond) }}</span>
               <span>ETA {{ formatEta(activeJob.etaSeconds) }}</span>
             </div>
+            <p v-if="activeJob.error" class="download-banner-error">
+              {{ activeJob.error }}
+            </p>
           </div>
 
           <div class="results-pane">
@@ -739,7 +777,7 @@ watch(
               <BaseSelect
                 :model-value="localForm.provider ?? 'faster-whisper'"
                 :options="sttProviderOptions"
-                @update:model-value="localForm.provider = String($event) as 'faster-whisper' | 'transformers'"
+                @update:model-value="localForm.provider = String($event) as 'faster-whisper' | 'transformers' | 'parakeet'"
               />
             </div>
 
@@ -806,11 +844,18 @@ watch(
   @include base-modal-close-btn;
 }
 
+.downloader-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px 12px;
+}
+
 .model-type-tabs,
 .downloader-tabs {
   display: flex;
   gap: 8px;
-  padding: 0 20px 12px;
 }
 
 .model-type-tab,
@@ -862,12 +907,11 @@ watch(
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px 180px auto;
+  grid-template-columns: minmax(0, 1fr) 180px auto;
   gap: 8px;
   overflow: visible;
 }
 
-.filter-select,
 .sort-select {
   min-width: 0;
 }
@@ -926,6 +970,13 @@ watch(
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.download-banner-error {
+  margin: 0;
+  color: $color-toast-error;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .results-pane {

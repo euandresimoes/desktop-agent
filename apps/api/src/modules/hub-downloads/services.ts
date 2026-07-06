@@ -39,8 +39,15 @@ class HubDownloadsService {
     'model.bin',
     'config.json',
     'tokenizer.json',
-    'preprocessor_config.json',
+  ] as const;
+
+  private readonly sttOptionalVocabularyFiles = [
     'vocabulary.json',
+    'vocabulary.txt',
+  ] as const;
+
+  private readonly sttOptionalSupportFiles = [
+    'preprocessor_config.json',
   ] as const;
 
   private readonly transformersProcessorFiles = [
@@ -52,6 +59,47 @@ class HubDownloadsService {
     'merges.txt',
     'special_tokens_map.json',
   ] as const;
+
+  private isParakeetHint(value: string | null | undefined) {
+    return (value ?? '').toLowerCase().includes('parakeet');
+  }
+
+  private async fetchRepositoryJsonFile(
+    repoId: string,
+    fileName: string
+  ): Promise<Record<string, unknown> | null> {
+    const response = await fetch(
+      `${HUB_BASE}/${repoId}/resolve/main/${fileName}?download=true`
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    try {
+      return (await response.json()) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private isParakeetConfig(
+    config: Record<string, unknown> | null,
+    hints: string[]
+  ) {
+    const configHints = [
+      typeof config?.model_type === 'string' ? config.model_type : '',
+      typeof config?._name_or_path === 'string' ? config._name_or_path : '',
+      ...(Array.isArray(config?.architectures)
+        ? config.architectures.filter((value): value is string => typeof value === 'string')
+        : []),
+    ];
+
+    return [...hints, ...configHints]
+      .join(' ')
+      .toLowerCase()
+      .includes('parakeet');
+  }
 
   async searchModels(input: {
     query: string;
@@ -233,12 +281,72 @@ class HubDownloadsService {
       return this.getJob(jobId);
     }
 
+    console.warn('[hub-downloads] cancelling job', {
+      jobId,
+      modelType: job.modelType,
+      repoId: job.repoId,
+      fileName: job.fileName,
+    });
+
     job.abortController?.abort();
-    job.abortController = null;
     job.status = 'cancelled';
+    job.error = 'Cancelled by user';
     job.finishedAt = new Date().toISOString();
 
     return this.getJob(jobId);
+  }
+
+  private markUnexpectedAbort(job: DownloadJobRecord, error: unknown) {
+    const message =
+      error instanceof Error && error.message
+        ? error.message
+        : 'The download was interrupted unexpectedly';
+
+    job.status = 'failed';
+    job.error = `Download aborted unexpectedly: ${message}`;
+    job.finishedAt = new Date().toISOString();
+
+    console.error('[hub-downloads] unexpected abort', {
+      jobId: job.id,
+      modelType: job.modelType,
+      repoId: job.repoId,
+      fileName: job.fileName,
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: message,
+    });
+  }
+
+  private handleInstallError(job: DownloadJobRecord, error: unknown) {
+    const message =
+      error instanceof Error ? error.message : 'Unexpected download error';
+    const wasAborted = error instanceof Error && error.name === 'AbortError';
+    const wasExplicitCancellation =
+      job.status === 'cancelled' || job.abortController?.signal.aborted === true;
+
+    if (wasAborted && wasExplicitCancellation) {
+      job.status = 'cancelled';
+      job.error = job.error ?? 'Cancelled by user';
+      job.finishedAt = new Date().toISOString();
+      return;
+    }
+
+    if (wasAborted) {
+      this.markUnexpectedAbort(job, error);
+      return;
+    }
+
+    job.status = 'failed';
+    job.error = message;
+    job.finishedAt = new Date().toISOString();
+
+    console.error('[hub-downloads] install failed', {
+      jobId: job.id,
+      modelType: job.modelType,
+      repoId: job.repoId,
+      fileName: job.fileName,
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: message,
+    });
   }
 
   private mapSearchResult(item: HubModelApiResponse) {
@@ -383,14 +491,31 @@ class HubDownloadsService {
       normalizedFiles.has(requiredFile)
     );
 
-    if (!hasRequiredFiles) {
+    const vocabularyFile = this.sttOptionalVocabularyFiles
+      .map((candidate) => `${directoryPrefix}${candidate}`)
+      .find((candidate) => normalizedFiles.has(candidate));
+
+    if (!hasRequiredFiles || !vocabularyFile) {
       return null;
     }
 
-    return requiredFiles;
+    const supportFiles = this.sttOptionalSupportFiles
+      .map((candidate) => `${directoryPrefix}${candidate}`)
+      .filter((candidate) => normalizedFiles.has(candidate));
+
+    return [...requiredFiles, vocabularyFile, ...supportFiles];
   }
 
   private detectSttProvider(fileName: string, repoFiles: string[]): STTProvider | null {
+    const normalizedFileName = fileName.replace(/\\/g, '/');
+    const baseName = path.posix.basename(normalizedFileName).toLowerCase();
+
+    if (baseName === 'model.bin') {
+      return this.getCompatibleSttBundle(fileName, repoFiles)
+        ? 'faster-whisper'
+        : null;
+    }
+
     if (this.getCompatibleSttBundle(fileName, repoFiles)) {
       return 'faster-whisper';
     }
@@ -402,13 +527,62 @@ class HubDownloadsService {
     return null;
   }
 
+  private async getCompatibleParakeetBundle(
+    repoId: string,
+    fileName: string,
+    repoFiles: string[]
+  ) {
+    const normalizedFileName = fileName.replace(/\\/g, '/');
+    const baseName = path.posix.basename(normalizedFileName).toLowerCase();
+    const supportedWeightFile =
+      normalizedFileName.toLowerCase().endsWith('.safetensors') ||
+      baseName === 'pytorch_model.bin' ||
+      baseName === 'model.bin';
+
+    if (!supportedWeightFile) {
+      return null;
+    }
+
+    const fileDirectory = path.posix.dirname(normalizedFileName);
+    const directoryPrefix = fileDirectory === '.' ? '' : `${fileDirectory}/`;
+    const normalizedFiles = new Set(
+      repoFiles.map((repoFile) => repoFile.replace(/\\/g, '/'))
+    );
+    const configFile = `${directoryPrefix}config.json`;
+
+    if (!normalizedFiles.has(configFile)) {
+      return null;
+    }
+
+    const processorFiles = this.transformersProcessorFiles
+      .map((file) => `${directoryPrefix}${file}`)
+      .filter((file) => normalizedFiles.has(file));
+
+    if (processorFiles.length === 0) {
+      return null;
+    }
+
+    const config = await this.fetchRepositoryJsonFile(repoId, configFile);
+
+    if (
+      !this.isParakeetConfig(config, [
+        repoId,
+        fileName,
+        ...repoFiles.filter((entry) => this.isParakeetHint(entry)),
+      ])
+    ) {
+      return null;
+    }
+
+    return [normalizedFileName, configFile, ...processorFiles];
+  }
+
   private getCompatibleTransformersBundle(fileName: string, repoFiles: string[]) {
     const normalizedFileName = fileName.replace(/\\/g, '/');
     const baseName = path.posix.basename(normalizedFileName).toLowerCase();
     const supportedWeightFile =
       baseName.endsWith('.safetensors') ||
-      baseName === 'pytorch_model.bin' ||
-      baseName === 'model.bin';
+      baseName === 'pytorch_model.bin';
 
     if (!supportedWeightFile) {
       return null;
@@ -596,19 +770,7 @@ class HubDownloadsService {
       job.progressPercent = 100;
       job.etaSeconds = 0;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unexpected download error';
-      const wasAborted = error instanceof Error && error.name === 'AbortError';
-
-      if (wasAborted) {
-        job.status = 'cancelled';
-        job.error = null;
-        job.finishedAt = new Date().toISOString();
-      } else {
-        job.status = 'failed';
-        job.error = job.status === 'failed' ? message : null;
-        job.finishedAt = new Date().toISOString();
-      }
+      this.handleInstallError(job, error);
 
       await fsPromises.rm(targetDir, {
         recursive: true,
@@ -635,17 +797,27 @@ class HubDownloadsService {
 
     const repoFiles = await this.fetchRepositoryFiles(input.repoId);
     const fasterWhisperBundle = this.getCompatibleSttBundle(input.fileName, repoFiles);
+    const parakeetBundle = await this.getCompatibleParakeetBundle(
+      input.repoId,
+      input.fileName,
+      repoFiles
+    );
     const transformersBundle = this.getCompatibleTransformersBundle(
       input.fileName,
       repoFiles
     );
-    const bundleFiles = fasterWhisperBundle ?? transformersBundle;
-    const provider = this.detectSttProvider(input.fileName, repoFiles);
+    const bundleFiles = fasterWhisperBundle ?? parakeetBundle ?? transformersBundle;
+    const provider =
+      fasterWhisperBundle
+        ? 'faster-whisper'
+        : parakeetBundle
+          ? 'parakeet'
+          : this.detectSttProvider(input.fileName, repoFiles);
 
     if (!bundleFiles || !provider) {
       job.status = 'failed';
       job.error =
-        'Selected STT file is not compatible with Faster-Whisper or Transformers';
+        'Selected STT file is not compatible with Faster-Whisper, Parakeet or Transformers';
       job.finishedAt = new Date().toISOString();
       job.abortController = null;
       return;
@@ -723,19 +895,7 @@ class HubDownloadsService {
       job.progressPercent = 100;
       job.etaSeconds = 0;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unexpected download error';
-      const wasAborted = error instanceof Error && error.name === 'AbortError';
-
-      if (wasAborted) {
-        job.status = 'cancelled';
-        job.error = null;
-      } else {
-        job.status = 'failed';
-        job.error = message;
-      }
-
-      job.finishedAt = new Date().toISOString();
+      this.handleInstallError(job, error);
     } finally {
       job.abortController = null;
       await fsPromises.rm(tempDir, {
@@ -834,19 +994,7 @@ class HubDownloadsService {
       job.progressPercent = 100;
       job.etaSeconds = 0;
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Unexpected download error';
-      const wasAborted = error instanceof Error && error.name === 'AbortError';
-
-      if (wasAborted) {
-        job.status = 'cancelled';
-        job.error = null;
-      } else {
-        job.status = 'failed';
-        job.error = message;
-      }
-
-      job.finishedAt = new Date().toISOString();
+      this.handleInstallError(job, error);
     } finally {
       job.abortController = null;
       await fsPromises.rm(tempDir, {

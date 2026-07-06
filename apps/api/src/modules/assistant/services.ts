@@ -48,18 +48,36 @@ class AssistantService {
   async prepareVoiceTurn(
     input: VoiceTurnInput,
   ): Promise<VoiceTurnPreparationOutput> {
-    const startedAt = Date.now();
-
+    const transcriptOverride = input.transcriptOverride?.trim();
     const sttStartedAt = Date.now();
+    const activeSttModel = await sttService.getActiveModel();
 
-    const transcription = await sttService.transcribe({
-      audioPath: input.audioPath,
-      requestId: input.requestId,
+    const transcription = transcriptOverride
+      ? {
+          text: transcriptOverride,
+          durationMs: 0,
+          serverDurationMs: undefined,
+          language: activeSttModel?.language,
+          modelId: activeSttModel?.id ?? 'streaming-transcript',
+        }
+      : await sttService.transcribe({
+          audioPath: input.audioPath,
+          requestId: input.requestId,
+        });
+
+    const sttDurationMs = transcriptOverride
+      ? Math.max(0, Math.round(input.sttStreamingDurationMs ?? 0))
+      : Date.now() - sttStartedAt;
+
+    console.log({
+      module: 'assistant',
+      event: 'voice-turn-stt-finished',
+      sttMode: input.sttMode ?? 'standard',
+      usedTranscriptOverride: Boolean(transcriptOverride),
+      sttDurationMs,
+      sttServerDurationMs: transcription.serverDurationMs,
+      sttModelId: transcription.modelId,
     });
-
-    const sttDurationMs = Date.now() - sttStartedAt;
-
-    console.log('Assistant STT took', sttDurationMs, 'ms');
 
     const transcript = transcription.text.trim();
 
@@ -80,13 +98,25 @@ class AssistantService {
 
     const llmDurationMs = Date.now() - llmStartedAt;
 
-    console.log('Assistant LLM took', llmDurationMs, 'ms');
+    console.log({
+      module: 'assistant',
+      event: 'voice-turn-llm-finished',
+      sttMode: input.sttMode ?? 'standard',
+      usedTranscriptOverride: Boolean(transcriptOverride),
+      llmDurationMs,
+      llmModelId: llmResponse.modelId,
+      llmModelName: llmResponse.modelName,
+    });
 
     const responseText = llmResponse.message?.trim();
 
     if (!responseText) {
       throw new Error('LLM returned empty response');
     }
+
+    const durationMs = transcriptOverride
+      ? sttDurationMs + llmDurationMs
+      : sttDurationMs + llmDurationMs;
 
     return {
       transcript,
@@ -95,7 +125,7 @@ class AssistantService {
       sttModelId: transcription.modelId,
       llmModelId: llmResponse.modelId,
       llmModelName: llmResponse.modelName,
-      durationMs: Date.now() - startedAt,
+      durationMs,
       sttDurationMs,
       sttServerDurationMs: transcription.serverDurationMs,
       llmDurationMs,
@@ -155,7 +185,13 @@ class AssistantService {
 
     const ttsDurationMs = Date.now() - ttsStartedAt;
 
-    console.log('Assistant TTS took', ttsDurationMs, 'ms');
+    console.log({
+      module: 'assistant',
+      event: 'voice-turn-tts-finished',
+      sttMode: input.sttMode ?? 'standard',
+      ttsDurationMs,
+      voiceId: activeVoice.id,
+    });
 
     return {
       transcript: prepared.transcript,

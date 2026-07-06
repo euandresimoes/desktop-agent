@@ -14,6 +14,9 @@ from services.audio_loader import load_wav_audio, resample_audio
 class TransformersProvider(STTProvider):
     provider_name = 'transformers'
 
+    def supports_streaming(self) -> bool:
+        return False
+
     def _import_runtime(self):
         try:
             import torch  # type: ignore

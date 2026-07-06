@@ -10,6 +10,7 @@ import { sttRoutes } from './modules/stt/routes.ts';
 import { hubDownloadsRoutes } from './modules/hub-downloads/routes.ts';
 import { assistantPreferencesRoutes } from './modules/assistant-preferences/routes.ts';
 import { ttsStreamingRoutes } from './modules/tts-streaming/routes.ts';
+import { sttStreamingRoutes } from './modules/stt-streaming/routes.ts';
 import { buildErrorPayload } from './shared/errors.ts';
 
 export const app = Fastify({
@@ -96,6 +97,10 @@ export const app = Fastify({
     //
     app.register(ttsStreamingRoutes, {
       prefix: '/api/v1/tts-streaming',
+    });
+    //
+    app.register(sttStreamingRoutes, {
+      prefix: '/api/v1/stt-streaming',
     });
 
     /**

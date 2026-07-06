@@ -5,7 +5,7 @@ import path from 'node:path';
 type STTModelConfig = {
   id: string;
   name: string;
-  provider: 'faster-whisper' | 'transformers';
+  provider: 'faster-whisper' | 'transformers' | 'parakeet';
 
   modelSource: 'huggingface' | 'local';
   modelPath: string;
@@ -46,18 +46,30 @@ async function main() {
     (model) => model.id === data.activeModelId
   );
 
-  if (!activeModel) {
-    throw new Error('No active STT model configured');
-  }
-
   const pythonPath = getPythonPath();
+  const sttEnv = activeModel
+    ? {
+        STT_PROVIDER: activeModel.provider,
+        STT_MODEL_PATH: activeModel.modelPath,
+        STT_DEVICE: activeModel.device,
+        STT_COMPUTE_TYPE: activeModel.computeType,
+        STT_LANGUAGE: activeModel.language ?? 'pt',
+        STT_BEAM_SIZE: String(activeModel.beamSize ?? 1),
+        STT_VAD_FILTER: String(activeModel.vadFilter ?? true),
+        STT_CPU_THREADS: process.env.STT_CPU_THREADS ?? '4',
+      }
+    : {};
+
+  if (!activeModel) {
+    console.warn('[start-stt-dev] No active STT model configured, starting server without pinned model env.');
+  }
 
   const child = spawn(
     pythonPath,
     [
       '-m',
       'uvicorn',
-      'server:app',
+      'main:app',
       '--host',
       '127.0.0.1',
       '--port',
@@ -71,15 +83,7 @@ async function main() {
 
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
-
-        STT_PROVIDER: activeModel.provider,
-        STT_MODEL_PATH: activeModel.modelPath,
-        STT_DEVICE: activeModel.device,
-        STT_COMPUTE_TYPE: activeModel.computeType,
-        STT_LANGUAGE: activeModel.language ?? 'pt',
-        STT_BEAM_SIZE: String(activeModel.beamSize ?? 1),
-        STT_VAD_FILTER: String(activeModel.vadFilter ?? true),
-        STT_CPU_THREADS: process.env.STT_CPU_THREADS ?? '4',
+        ...sttEnv,
       },
     }
   );

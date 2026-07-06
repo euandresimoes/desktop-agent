@@ -31,9 +31,12 @@ defineProps<{
 }
 
 .row-copy :deep(span) {
-  color: $color-text-muted;
+  max-width: 350px;
+  
   font-size: 12px;
   line-height: 1.3;
+  
+  color: $color-text-muted;
 }
 
 @media (max-width: 900px) {

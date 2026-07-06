@@ -1,5 +1,5 @@
 import { useToast } from "../../../shared/utils/toast";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { fetchJsonOrThrow } from "../../../shared/utils/http";
 import {
   useHubDownloadsService,
@@ -27,7 +27,7 @@ export interface LlmModel {
 export interface SttModel {
   id: string;
   name: string;
-  provider: "faster-whisper" | "transformers";
+  provider: "faster-whisper" | "transformers" | "parakeet";
   modelSource: "huggingface" | "local";
   modelPath: string;
   device: "cpu" | "cuda" | "auto";
@@ -35,6 +35,7 @@ export interface SttModel {
   language: string;
   beamSize: number;
   vadFilter: boolean;
+  cpuThreads: number;
 }
 
 export interface TtsVoice {
@@ -63,7 +64,7 @@ export interface NewLlmForm {
 export interface NewSttForm {
   id: string;
   name: string;
-  provider: "faster-whisper" | "transformers";
+  provider: "faster-whisper" | "transformers" | "parakeet";
   modelSource: "huggingface" | "local";
   modelPath: string;
   device: "cpu" | "cuda" | "auto";
@@ -71,6 +72,7 @@ export interface NewSttForm {
   language: string;
   beamSize: number;
   vadFilter: boolean;
+  cpuThreads: number;
 }
 
 export interface NewVoiceForm {
@@ -132,6 +134,7 @@ const createDefaultSttForm = (): NewSttForm => ({
   language: "en",
   beamSize: 1,
   vadFilter: true,
+  cpuThreads: 4,
 });
 
 const createDefaultVoiceForm = (): NewVoiceForm => ({
@@ -152,9 +155,26 @@ const hubSearchQuery = ref("");
 const hubPipelineTag = ref("all");
 const hubSort = ref<HubSearchSortOption>("featured");
 const hubModelType = ref<HubModelType>("llm");
+const seenHubTerminalStatuses = new Map<string, HubInstallJob["status"]>();
 
-const detectLocalSttProvider = (modelPath: string): "faster-whisper" | "transformers" => {
+const resolveHubPipelineTag = (type: HubModelType) => {
+  if (type === "stt") {
+    return "automatic-speech-recognition";
+  }
+
+  if (type === "tts") {
+    return "text-to-speech";
+  }
+
+  return "text-generation";
+};
+
+const detectLocalSttProvider = (modelPath: string): "faster-whisper" | "transformers" | "parakeet" => {
   const normalizedPath = modelPath.replace(/\\/g, "/").toLowerCase();
+
+  if (normalizedPath.includes("parakeet")) {
+    return "parakeet";
+  }
 
   if (
     normalizedPath.endsWith("/model.bin") ||
@@ -172,6 +192,32 @@ const detectLocalSttProvider = (modelPath: string): "faster-whisper" | "transfor
 export function useSettingsService(onUpdated?: () => void) {
   const toast = useToast();
 
+  watch(
+    hubDownloads.jobs,
+    (jobs) => {
+      for (const job of jobs) {
+        const previousStatus = seenHubTerminalStatuses.get(job.id);
+
+        if (previousStatus === job.status) {
+          continue;
+        }
+
+        if (job.status === "failed") {
+          toast.error(job.error || `Failed to install ${job.displayName}.`);
+        } else if (job.status === "cancelled" && previousStatus && previousStatus !== "cancelled") {
+          toast.warning(job.error || `${job.displayName} download cancelled.`);
+        } else if (job.status === "completed" && previousStatus !== "completed") {
+          toast.success(`${job.displayName} installed successfully.`);
+        }
+
+        if (job.status === "failed" || job.status === "cancelled" || job.status === "completed") {
+          seenHubTerminalStatuses.set(job.id, job.status);
+        }
+      }
+    },
+    { deep: true }
+  );
+
   /** Fetch all model/voice configurations from the backend. */
   const fetchAll = async () => {
     isLoading.value = true;
@@ -181,7 +227,19 @@ export function useSettingsService(onUpdated?: () => void) {
       activeLlmId.value = llmData.activeModelId;
 
       const sttData = await fetchJsonOrThrow<any>(`${API_BASE}/stt/models`, undefined, "Failed to load STT models");
-      sttModels.value = sttData.models || [];
+      sttModels.value = (sttData.models || []).map((model: Partial<SttModel>) => ({
+        id: model.id || "",
+        name: model.name || "",
+        provider: model.provider || "faster-whisper",
+        modelSource: model.modelSource || "local",
+        modelPath: model.modelPath || "",
+        device: model.device || "cpu",
+        computeType: model.computeType || "int8",
+        language: model.language || "pt",
+        beamSize: Number(model.beamSize ?? 1),
+        vadFilter: typeof model.vadFilter === "boolean" ? model.vadFilter : true,
+        cpuThreads: Number(model.cpuThreads ?? 4),
+      }));
       activeSttId.value = sttData.activeModelId;
 
       const ttsData = await fetchJsonOrThrow<any>(`${API_BASE}/setup/voices`, undefined, "Failed to load TTS voices");
@@ -260,6 +318,7 @@ export function useSettingsService(onUpdated?: () => void) {
           language: m.language,
           beamSize: Number(m.beamSize),
           vadFilter: m.vadFilter,
+          cpuThreads: Number(m.cpuThreads),
         };
       } else if (type === "tts") {
         const m = model as TtsVoice;
@@ -450,20 +509,15 @@ export function useSettingsService(onUpdated?: () => void) {
 
   const setHubModelType = (type: HubModelType) => {
     hubModelType.value = type;
-
-    if (type === "llm" && hubPipelineTag.value === "all") {
-      hubPipelineTag.value = "text-generation";
-    } else if (type === "stt" && hubPipelineTag.value === "all") {
-      hubPipelineTag.value = "automatic-speech-recognition";
-    } else if (type === "tts" && hubPipelineTag.value === "all") {
-      hubPipelineTag.value = "text-to-speech";
-    }
+    hubPipelineTag.value = resolveHubPipelineTag(type);
   };
 
   const searchHubModels = async () => {
     try {
+      const pipelineTag = resolveHubPipelineTag(hubModelType.value);
+      hubPipelineTag.value = pipelineTag;
       await hubDownloads.searchModels(hubSearchQuery.value, hubModelType.value, {
-        pipelineTag: hubPipelineTag.value,
+        pipelineTag,
         sort: hubSort.value,
       });
     } catch (error: any) {

@@ -42,6 +42,7 @@ class STTService {
   private readonly supportedProviders = new Set<STTProvider>([
     'faster-whisper',
     'transformers',
+    'parakeet',
   ]);
   private readonly bundledModelIds = new Set([
     'tiny',
@@ -56,11 +57,31 @@ class STTService {
     'turbo',
   ]);
 
+  private normalizeStoredModel(model: STTModelConfig): STTModelConfig {
+    return {
+      ...model,
+      beamSize: Number.isFinite(model.beamSize) && model.beamSize > 0
+        ? model.beamSize
+        : 1,
+      vadFilter: typeof model.vadFilter === 'boolean' ? model.vadFilter : true,
+      cpuThreads:
+        Number.isFinite(model.cpuThreads) && model.cpuThreads > 0
+          ? model.cpuThreads
+          : 4,
+    };
+  }
+
   private async readConfig(): Promise<STTModelsFile> {
     try {
       const file = await fs.readFile(sttModelsConfigPath, 'utf-8');
+      const parsed = JSON.parse(file) as STTModelsFile;
 
-      return JSON.parse(file) as STTModelsFile;
+      return {
+        activeModelId: parsed.activeModelId ?? null,
+        models: Array.isArray(parsed.models)
+          ? parsed.models.map((model) => this.normalizeStoredModel(model))
+          : [],
+      };
     } catch {
       return {
         activeModelId: null,
@@ -108,29 +129,30 @@ class STTService {
       hasModelFile,
       hasConfig,
       hasTokenizer,
-      hasPreprocessorConfig,
-      hasVocabulary,
+      hasVocabularyJson,
+      hasVocabularyTxt,
     ] =
       await Promise.all([
         fileExists(modelFilePath),
         fileExists(path.join(modelDirectory, 'config.json')),
         fileExists(path.join(modelDirectory, 'tokenizer.json')),
-        fileExists(path.join(modelDirectory, 'preprocessor_config.json')),
         fileExists(path.join(modelDirectory, 'vocabulary.json')),
+        fileExists(path.join(modelDirectory, 'vocabulary.txt')),
       ]);
+
+    const hasVocabulary = hasVocabularyJson || hasVocabularyTxt;
 
     if (
       !hasModelFile ||
       !hasConfig ||
       !hasTokenizer ||
-      !hasPreprocessorConfig ||
       !hasVocabulary
     ) {
       return {
         valid: false,
         resolvedModelPath: inputPath,
         reason:
-          'Incomplete Faster-Whisper bundle. Expected model.bin, config.json, tokenizer.json, preprocessor_config.json, and vocabulary.json in the same folder',
+          'Incomplete Faster-Whisper bundle. Expected model.bin, config.json, tokenizer.json, and vocabulary.json or vocabulary.txt in the same folder',
       };
     }
 
@@ -216,6 +238,121 @@ class STTService {
     };
   }
 
+  private async readJsonFileIfExists(inputPath: string) {
+    try {
+      const file = await fs.readFile(inputPath, 'utf-8');
+      return JSON.parse(file) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  private isParakeetConfig(
+    config: Record<string, unknown> | null,
+    hints: string[]
+  ) {
+    const configHints = [
+      typeof config?.model_type === 'string' ? config.model_type : '',
+      typeof config?._name_or_path === 'string' ? config._name_or_path : '',
+      ...(Array.isArray(config?.architectures)
+        ? config.architectures.filter((value): value is string => typeof value === 'string')
+        : []),
+    ];
+
+    return [...hints, ...configHints]
+      .join(' ')
+      .toLowerCase()
+      .includes('parakeet');
+  }
+
+  private async validateLocalParakeetModelPath(
+    inputPath: string
+  ): Promise<LocalSttValidationResult> {
+    const stats = await fs.stat(inputPath);
+    const modelDirectory = stats.isDirectory()
+      ? inputPath
+      : path.dirname(inputPath);
+    const modelFileName = stats.isDirectory()
+      ? null
+      : path.basename(inputPath).toLowerCase();
+
+    const entries = await fs.readdir(modelDirectory);
+    const normalizedEntries = new Set(entries.map((entry) => entry.toLowerCase()));
+    const hasConfig = normalizedEntries.has('config.json');
+    const weightFiles = entries.filter((entry) => {
+      const lowerEntry = entry.toLowerCase();
+      return (
+        lowerEntry.endsWith('.safetensors') ||
+        lowerEntry === 'pytorch_model.bin' ||
+        lowerEntry === 'model.bin'
+      );
+    });
+    const hasProcessorArtifacts = [
+      'preprocessor_config.json',
+      'processor_config.json',
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'vocab.json',
+      'merges.txt',
+      'special_tokens_map.json',
+    ].some((fileName) => normalizedEntries.has(fileName));
+
+    if (!hasConfig) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason: 'Parakeet STT model is missing config.json',
+      };
+    }
+
+    if (weightFiles.length === 0) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Parakeet STT model is missing a supported weight file like model.safetensors or pytorch_model.bin',
+      };
+    }
+
+    if (!hasProcessorArtifacts) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Parakeet STT model is missing processor or tokenizer files required for inference',
+      };
+    }
+
+    if (
+      modelFileName &&
+      !weightFiles.some((entry) => entry.toLowerCase() === modelFileName)
+    ) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason:
+          'Selected file is not a supported Parakeet weight file for this STT model',
+      };
+    }
+
+    const config = await this.readJsonFileIfExists(
+      path.join(modelDirectory, 'config.json')
+    );
+
+    if (!this.isParakeetConfig(config, [inputPath, modelDirectory])) {
+      return {
+        valid: false,
+        resolvedModelPath: inputPath,
+        reason: 'Selected STT bundle is not recognized as a Parakeet model',
+      };
+    }
+
+    return {
+      valid: true,
+      resolvedModelPath: modelDirectory,
+    };
+  }
+
   private async validateLocalModelPath(
     provider: STTProvider,
     inputPath: string
@@ -248,6 +385,10 @@ class STTService {
       return this.validateLocalTransformersModelPath(trimmedPath);
     }
 
+    if (provider === 'parakeet') {
+      return this.validateLocalParakeetModelPath(trimmedPath);
+    }
+
     return {
       valid: false,
       resolvedModelPath: trimmedPath,
@@ -271,6 +412,18 @@ class STTService {
         return {
           valid: true,
           resolvedModelPath: model.modelPath,
+        };
+      }
+
+      if (model.provider === 'parakeet') {
+        const valid = model.modelPath.toLowerCase().includes('parakeet');
+
+        return {
+          valid,
+          resolvedModelPath: model.modelPath,
+          reason: valid
+            ? undefined
+            : 'Only Parakeet-compatible Hugging Face repositories are supported for this provider',
         };
       }
 
@@ -342,6 +495,7 @@ class STTService {
       language: input.language ?? 'pt',
       beamSize: input.beamSize ?? 1,
       vadFilter: input.vadFilter ?? true,
+      cpuThreads: input.cpuThreads ?? 4,
     };
 
     const sourceValidation = await this.resolveModelSource(model);
@@ -374,6 +528,7 @@ class STTService {
     language?: string;
     beamSize?: number;
     vadFilter?: boolean;
+    cpuThreads?: number;
   }) {
     const modelId = this.normalizeId(input.id);
 
@@ -395,6 +550,7 @@ class STTService {
       language: input.language,
       beamSize: input.beamSize,
       vadFilter: input.vadFilter,
+      cpuThreads: input.cpuThreads,
     });
   }
 
@@ -458,6 +614,7 @@ class STTService {
       language: input.language ?? currentModel.language,
       beamSize: input.beamSize ?? currentModel.beamSize,
       vadFilter: input.vadFilter ?? currentModel.vadFilter,
+      cpuThreads: input.cpuThreads ?? currentModel.cpuThreads,
     };
 
     const sourceValidation = await this.resolveModelSource(updatedModel);
@@ -544,18 +701,28 @@ class STTService {
     formData.append('language', activeModel.language);
     formData.append('beamSize', String(activeModel.beamSize ?? 1));
     formData.append('vadFilter', String(activeModel.vadFilter ?? true));
+    formData.append('cpuThreads', String(activeModel.cpuThreads ?? 4));
 
     const startedAt = Date.now();
 
-    const response = await fetch(`${STT_SERVER_URL}/transcribe`, {
-      method: 'POST',
-      headers: input.requestId
-        ? {
-            'x-request-id': input.requestId,
-          }
-        : undefined,
-      body: formData,
-    });
+    let response: Response;
+
+    try {
+      response = await fetch(`${STT_SERVER_URL}/transcribe`, {
+        method: 'POST',
+        headers: input.requestId
+          ? {
+              'x-request-id': input.requestId,
+            }
+          : undefined,
+        body: formData,
+      });
+    } catch (error) {
+      throw new AppError({
+        message: 'STT server is unreachable',
+        details: error instanceof Error ? error.stack ?? error.message : String(error),
+      });
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
